@@ -1,0 +1,38 @@
+{
+    "name": "Hardhat",
+    "version": "1.0.0",
+    "type": "module",
+    "private": true,
+    "scripts": {
+        "compile": "hardhat compile",
+        "test": "hardhat test --network localhost",
+        "test:node": "hardhat node",
+        "lint": "solhint 'contracts/**/*.sol'",
+        "deploy:somnia": "hardhat run scripts/deploy.ts --network somniaTestnet",
+        "register:somnia": "hardhat run scripts/register-agents.ts --network somniaTestnet",
+        "demo:somnia": "hardhat run scripts/demo-job.ts --network somniaTestnet",
+        "typecheck": "tsc --noEmit"
+    },
+    "devDependencies": {
+        "@nomicfoundation/hardhat-ethers": "^4.0.12",
+        "@nomicfoundation/hardhat-ignition-ethers": "^3.0.7",
+        "@nomicfoundation/hardhat-mocha": "^3.0.20",
+        "@nomicfoundation/hardhat-verify": "^3.0.5",
+        "@types/chai": "^4.3.20",
+        "@types/chai-as-promised": "^8.0.2",
+        "@types/mocha": "^10.0.10",
+        "@types/node": "^22.19.19",
+        "chai": "^5.3.3",
+        "ethers": "^6.16.0",
+        "hardhat": "^3.5.1",
+        "mocha": "^11.7.6",
+        "solhint": "^5.0.4",
+        "ts-node": "^10.9.2",
+        "tsx": "^4.22.3",
+        "typescript": "~5.8.0"
+    },
+    "dependencies": {
+        "@openzeppelin/contracts": "^5.1.0",
+        "dotenv": "^16.6.1"
+    }
+}
