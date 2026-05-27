@@ -1,0 +1,405 @@
+import { useMemo } from "react";
+import { Link } from "wouter";
+import type { Address } from "viem";
+import { TopBar } from "@/components/TopBar";
+import {
+  useBounty,
+  useBids,
+  useBountyTimeline,
+  useAcceptBid,
+  useExpireBounty,
+  type TimelineEntry,
+} from "@/lib/domain/bounties";
+import { useAgent } from "@/lib/domain/agents";
+import { useAccount } from "wagmi";
+import { shortAddr, formatStt, timeUntil } from "@/lib/format";
+import { ipfsGatewayUrl } from "@/lib/web3/uploader";
+import {
+  ArrowLeft,
+  Target,
+  ExternalLink,
+  Clock,
+  CheckCircle2,
+  AlertTriangle,
+  Bot,
+  GitBranch,
+  ShieldAlert,
+} from "lucide-react";
+import { toast } from "sonner";
+import { StatusBadge } from "./BountiesBoard";
+
+export default function BountyDetail({ id: idParam }: { id: string }) {
+  const idNum = (() => {
+    try {
+      return BigInt(idParam);
+    } catch {
+      return undefined;
+    }
+  })();
+  const { data: bounty, isLoading } = useBounty(idNum);
+  const { bids } = useBids(idNum);
+  const timelineQ = useBountyTimeline(idNum);
+  const { accept, isPending: acceptPending } = useAcceptBid();
+  const { expire, isPending: expirePending } = useExpireBounty();
+  const { address: me } = useAccount();
+
+  const isPoster =
+    !!bounty && !!me && bounty.poster.toLowerCase() === me.toLowerCase();
+  const isExpired =
+    !!bounty && Date.now() / 1000 > Number(bounty.deadline) && bounty.status === "Open";
+
+  if (idNum === undefined) {
+    return (
+      <div className="min-h-[100dvh] flex flex-col bg-background">
+        <TopBar />
+        <main className="flex-1 max-w-2xl w-full mx-auto p-12 text-center">
+          <h1 className="font-serif-display text-3xl text-chalk mb-2">
+            Invalid bounty
+          </h1>
+          <Link href="/bounties" className="text-amber hover:underline">
+            Back to board
+          </Link>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-[100dvh] flex flex-col bg-background">
+      <TopBar />
+      <main className="flex-1 max-w-4xl w-full mx-auto p-6 md:p-12 pb-24">
+        <Link
+          href="/bounties"
+          className="inline-flex items-center gap-2 text-muted-foreground hover:text-chalk transition-colors text-sm mb-8"
+        >
+          <ArrowLeft className="w-4 h-4" /> Bounty board
+        </Link>
+
+        {isLoading || !bounty ? (
+          <div className="space-y-4">
+            <div className="h-24 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+            <div className="h-40 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+          </div>
+        ) : (
+          <>
+            <header className="flex flex-col md:flex-row md:items-center gap-6 mb-10 border-b border-border/50 pb-8">
+              <div className="w-14 h-14 rounded-sm bg-amber/10 border border-amber/30 flex items-center justify-center shrink-0">
+                <Target className="w-6 h-6 text-amber" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-bold uppercase tracking-widest text-amber mb-2">
+                  Bounty
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <h1 className="font-serif-display text-3xl md:text-4xl text-chalk tracking-tight leading-tight">
+                    Bounty #{bounty.id.toString()}
+                  </h1>
+                  <StatusBadge status={bounty.status} />
+                </div>
+                <div className="font-mono text-[10px] text-muted-foreground mt-2 truncate">
+                  athlete {shortAddr(bounty.athlete, 6, 6)} · posted by{" "}
+                  {shortAddr(bounty.poster, 6, 6)}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1 text-right shrink-0">
+                <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
+                  Escrow
+                </div>
+                <div className="font-mono text-amber text-xl">
+                  {formatStt(bounty.escrow)}
+                </div>
+                <div className="text-[10px] font-mono text-muted-foreground">
+                  deadline {timeUntil(bounty.deadline)}
+                </div>
+              </div>
+            </header>
+
+            <section className="mb-10">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
+                Brief
+              </h2>
+              <dl className="grid sm:grid-cols-2 gap-3 text-sm">
+                <Row label="Video CID" value={shortAddr(bounty.videoCid, 8, 6)}>
+                  {!bounty.videoCid.startsWith("local:") && (
+                    <a
+                      href={ipfsGatewayUrl(bounty.videoCid)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-amber hover:text-amber-soft ml-2 inline-flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </Row>
+                <Row
+                  label="Required skills"
+                  value={bounty.requiredSkills.length.toString()}
+                />
+              </dl>
+            </section>
+
+            {isExpired && (
+              <div className="mb-10 p-5 border border-destructive/30 bg-destructive/5 rounded-sm flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="w-4 h-4 text-destructive mt-0.5" />
+                  <div>
+                    <div className="text-sm text-chalk font-medium">
+                      Deadline passed before any bid was accepted
+                    </div>
+                    <div className="text-xs text-muted-foreground font-light">
+                      Anyone can refund the escrow to the poster.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      await expire(bounty.id);
+                      toast.success("Refund submitted");
+                    } catch (e) {
+                      toast.error("Refund failed", {
+                        description: e instanceof Error ? e.message : String(e),
+                      });
+                    }
+                  }}
+                  disabled={expirePending}
+                  className="px-3 py-2 bg-destructive/10 text-destructive hover:bg-destructive/20 text-xs font-bold uppercase tracking-widest rounded-sm disabled:opacity-50"
+                >
+                  Refund poster
+                </button>
+              </div>
+            )}
+
+            <section className="mb-10">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
+                Bids · {bids.length}
+              </h2>
+              {bids.length === 0 ? (
+                <p className="text-xs text-muted-foreground font-light">
+                  No bids yet.
+                </p>
+              ) : (
+                <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
+                  {bids.map((b) => (
+                    <BidRow
+                      key={b.bidId.toString()}
+                      agent={b.agent}
+                      proposedFee={b.proposedFee}
+                      placedAt={b.placedAt}
+                      canAccept={isPoster && bounty.status === "Open"}
+                      isAccepted={
+                        bounty.status !== "Open" &&
+                        bounty.leadAgent.toLowerCase() === b.agent.toLowerCase()
+                      }
+                      onAccept={async () => {
+                        try {
+                          await accept(bounty.id, b.bidId);
+                          toast.success("Bid accepted");
+                        } catch (e) {
+                          toast.error("Accept failed", {
+                            description: e instanceof Error ? e.message : String(e),
+                          });
+                        }
+                      }}
+                      busy={acceptPending}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section className="mb-10">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+                <GitBranch className="w-3.5 h-3.5 text-amber/70" /> Timeline
+              </h2>
+              {timelineQ.isLoading ? (
+                <div className="h-24 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+              ) : (
+                <Timeline entries={timelineQ.data ?? []} />
+              )}
+            </section>
+
+            {bounty.status === "Settled" && <SettledSplits entries={timelineQ.data ?? []} />}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function BidRow({
+  agent,
+  proposedFee,
+  placedAt,
+  canAccept,
+  isAccepted,
+  onAccept,
+  busy,
+}: {
+  agent: Address;
+  proposedFee: bigint;
+  placedAt: bigint;
+  canAccept: boolean;
+  isAccepted: boolean;
+  onAccept: () => void;
+  busy: boolean;
+}) {
+  const { data: ag } = useAgent(agent);
+  return (
+    <li className="flex items-center gap-4 px-4 py-3">
+      <div className="w-9 h-9 rounded-sm bg-amber/10 border border-amber/30 flex items-center justify-center shrink-0">
+        <Bot className="w-4 h-4 text-amber/90" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Link
+            href={`/a/${agent}`}
+            className="text-sm text-chalk hover:text-amber transition-colors font-medium"
+          >
+            {ag?.name || shortAddr(agent, 6, 4)}
+          </Link>
+          {ag && !ag.active && (
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-destructive bg-destructive/10 border border-destructive/30 px-1.5 py-0.5 rounded-sm">
+              <ShieldAlert className="w-3 h-3" /> Deregistered
+            </span>
+          )}
+          {isAccepted && (
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-amber bg-amber/10 border border-amber/30 px-1.5 py-0.5 rounded-sm">
+              <CheckCircle2 className="w-3 h-3" /> Lead
+            </span>
+          )}
+        </div>
+        <div className="font-mono text-[10px] text-muted-foreground truncate">
+          {shortAddr(agent, 6, 4)} ·{" "}
+          {placedAt > 0n
+            ? new Date(Number(placedAt) * 1000).toLocaleString()
+            : "—"}
+        </div>
+      </div>
+      <div className="font-mono text-sm text-amber shrink-0">{formatStt(proposedFee)}</div>
+      {canAccept && (
+        <button
+          onClick={onAccept}
+          disabled={busy}
+          className="shrink-0 px-3 py-1.5 bg-amber hover:bg-amber-soft text-ink text-[10px] uppercase tracking-widest font-bold rounded-sm disabled:opacity-50"
+        >
+          Accept
+        </button>
+      )}
+    </li>
+  );
+}
+
+function Timeline({ entries }: { entries: TimelineEntry[] }) {
+  if (entries.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground font-light">
+        No events yet — the timeline will fill in as agents act.
+      </p>
+    );
+  }
+  return (
+    <ol className="space-y-3">
+      {entries.map((e, i) => (
+        <li
+          key={i}
+          className="flex items-start gap-3 p-3 bg-card/40 border border-border/50 rounded-sm"
+        >
+          <Clock className="w-3.5 h-3.5 text-amber/70 mt-1 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-chalk font-medium">{e.kind}</div>
+            <div className="text-[10px] font-mono text-muted-foreground truncate">
+              {summarizeEntry(e)}
+            </div>
+          </div>
+          <div className="text-[10px] font-mono text-muted-foreground shrink-0">
+            blk {e.blockNumber.toString()}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function summarizeEntry(e: TimelineEntry): string {
+  switch (e.kind) {
+    case "BountyPosted":
+      return `escrow ${formatStt(e.data.escrow)} · deadline ${timeUntil(e.data.deadline)}`;
+    case "BidPlaced":
+      return `bid ${shortAddr(e.data.agent)} · ${formatStt(e.data.proposedFee)}`;
+    case "BidAccepted":
+      return `lead ${shortAddr(e.data.leadAgent)} · ${formatStt(e.data.acceptedFee)}`;
+    case "JobStarted":
+      return `lead ${shortAddr(e.data.leadAgent)}`;
+    case "SubContracted":
+      return `sub ${shortAddr(e.data.subAgent)}`;
+    case "Settled":
+      return `paid ${formatStt(e.data.totalPaid)} across ${e.data.splits.length} agent(s)`;
+    case "BountyExpired":
+      return `refunded ${formatStt(e.data.refund)}`;
+  }
+}
+
+function SettledSplits({ entries }: { entries: TimelineEntry[] }) {
+  const settled = entries.find((e) => e.kind === "Settled");
+  if (!settled || settled.kind !== "Settled") return null;
+  const splits = settled.data.splits;
+  const total = splits.reduce((s, x) => s + x.bps, 0) || 10_000;
+  return (
+    <section className="mb-10">
+      <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
+        Payout split
+      </h2>
+      <div className="h-6 w-full flex rounded-sm overflow-hidden border border-border/50">
+        {splits.map((s, i) => {
+          const pct = (s.bps / total) * 100;
+          const odd = i % 2 === 0;
+          return (
+            <div
+              key={i}
+              style={{ width: `${pct}%` }}
+              className={`flex items-center justify-center text-[10px] font-mono ${
+                odd ? "bg-amber text-ink" : "bg-chalk/20 text-chalk"
+              }`}
+              title={`${shortAddr(s.agent)} · ${(s.bps / 100).toFixed(1)}%`}
+            >
+              {pct >= 8 ? `${(s.bps / 100).toFixed(0)}%` : ""}
+            </div>
+          );
+        })}
+      </div>
+      <ul className="mt-3 space-y-1 text-xs">
+        {splits.map((s, i) => (
+          <li key={i} className="flex justify-between font-mono text-chalk/80">
+            <Link href={`/a/${s.agent}`} className="hover:text-amber">
+              {shortAddr(s.agent, 6, 4)}
+            </Link>
+            <span>{(s.bps / 100).toFixed(2)}%</span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function Row({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="bg-card/40 border border-border/50 px-4 py-3 rounded-sm">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+        {label}
+      </div>
+      <div className="font-mono text-xs text-chalk/80 flex items-center">
+        {value}
+        {children}
+      </div>
+    </div>
+  );
+}
