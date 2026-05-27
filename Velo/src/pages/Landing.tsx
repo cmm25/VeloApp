@@ -69,7 +69,7 @@ export default function Landing() {
           >
             <motion.h1
               variants={{ hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0 } }}
-              className="font-serif-display text-5xl md:text-6xl lg:text-7xl leading-[0.95] text-chalk tracking-tight"
+              className="font-serif-display text-4xl md:text-5xl lg:text-6xl leading-[0.95] text-chalk tracking-tight"
             >
               A verifiable training record, owned by the <span className="text-amber">athlete</span>.
             </motion.h1>
