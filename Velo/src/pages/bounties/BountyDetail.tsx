@@ -1,4 +1,3 @@
-import { useMemo } from "react";
 import { Link } from "wouter";
 import type { Address } from "viem";
 import { TopBar } from "@/components/TopBar";
