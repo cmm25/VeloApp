@@ -1,7 +1,3 @@
-/**
- * React hooks wrapping the VeloOrchestrator + AthleteSBT contracts via wagmi.
- * Every read passes `query.enabled` so disconnected wallets don't fire RPCs.
- */
 import { useMemo } from "react";
 import {
   useAccount,
