@@ -7,7 +7,7 @@ import {
   useAgentActivity,
   skillLabel,
 } from "@/lib/domain/agents";
-import { shortAddr, formatStt } from "@/lib/format";
+import { formatStt } from "@/lib/format";
 import {
   ArrowLeft,
   Bot,

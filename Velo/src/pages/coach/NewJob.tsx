@@ -79,7 +79,7 @@ export default function NewJob() {
   const [pickedSource, setPickedSource] = useState<"library" | "upload" | null>(null);
   const [isDemoCid, setIsDemoCid] = useState(false);
 
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [_uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);

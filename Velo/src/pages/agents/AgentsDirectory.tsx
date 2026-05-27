@@ -8,7 +8,7 @@ import {
   skillLabel,
   type AgentRecord,
 } from "@/lib/domain/agents";
-import { shortAddr, formatStt, timeUntil } from "@/lib/format";
+import { shortAddr, formatStt } from "@/lib/format";
 import { Bot, ShieldCheck, ShieldOff, Activity } from "lucide-react";
 
 export default function AgentsDirectory() {
