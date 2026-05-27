@@ -1,39 +1,54 @@
-import { ethers, network } from "hardhat";
+import hre from "hardhat";
 import * as fs from "fs";
 import * as path from "path";
 
-/**
- * Registers AGENT_FORM and AGENT_PRESCRIBER addresses on the AgentRegistry
- * recorded in deployments/<network>.json. Only works against MockAgentRegistry
- * (i.e. when SOMNIA_AGENT_REGISTRY was not set at deploy time). For the
- * external Somnia AgentRegistry, use the somnia-agent-kit CLI.
- */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ethers = (hre as any).ethers;
+const networkName: string = (hre as any).network?.name ?? process.env.HARDHAT_NETWORK ?? "hardhat";
+
+// Registers agent wallets on AgentRegistry.
+// Each agent calls register() on their own wallet — no admin needed.
+// Run after deploy.ts.
+//
+// Usage: npx hardhat run scripts/register-agents.ts --network somniaTestnet
+
 async function main() {
-  const net = network.name;
-  const file = path.resolve(__dirname, "../../../deployments", `${net}.json`);
+  const net = networkName;
+  const file = path.resolve(__dirname, "../../deployments", `${net}.json`);
+  if (!fs.existsSync(file)) throw new Error(`No deployment at ${file} — run deploy.ts first`);
+
   const deployment = JSON.parse(fs.readFileSync(file, "utf8"));
   const registryAddr: string = deployment.contracts.agentRegistry;
 
-  const formAddr = process.env.AGENT_FORM_ADDRESS;
-  const presAddr = process.env.AGENT_PRESCRIBER_ADDRESS;
-  if (!formAddr || !presAddr) {
-    throw new Error("Set AGENT_FORM_ADDRESS and AGENT_PRESCRIBER_ADDRESS in env.");
-  }
+  // Wallet order from hardhat.config: [0]=deployer [1]=coach [2]=agentForm [3]=agentPrescriber
+  const signers = await ethers.getSigners();
+  const agentForm       = signers[2] ?? signers[0];
+  const agentPrescriber = signers[3] ?? signers[0];
 
-  const reg = await ethers.getContractAt("MockAgentRegistry", registryAddr);
-  console.log(`Registry: ${registryAddr}`);
-  for (const a of [formAddr, presAddr]) {
-    if (await reg.isActive(a)) {
-      console.log(`  ${a} already active.`);
+  const reg = await ethers.getContractAt("AgentRegistry", registryAddr);
+  console.log(`\nRegistry: ${registryAddr}`);
+
+  const FORM_SKILL      = ethers.keccak256(ethers.toUtf8Bytes("vision.pose"));
+  const PRESCRIBE_SKILL = ethers.keccak256(ethers.toUtf8Bytes("biomechanics.prescription"));
+  const FEE             = ethers.parseEther("0.001");
+
+  const agents = [
+    { signer: agentForm,       name: "Velo Form Agent",       skill: FORM_SKILL },
+    { signer: agentPrescriber, name: "Velo Prescriber Agent", skill: PRESCRIBE_SKILL },
+  ];
+
+  for (const { signer, name, skill } of agents) {
+    console.log(`\n${name} (${signer.address})`);
+    if (await reg.isActive(signer.address)) {
+      console.log("  already registered — skip");
       continue;
     }
-    const tx = await reg.register(a);
+    const tx = await reg.connect(signer).register(name, "", [skill], FEE);
     await tx.wait();
-    console.log(`  Registered ${a}`);
+    console.log("  ✓ registered");
   }
+
+  console.log("\n✓ Done");
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+main().catch((e) => { console.error(e); process.exit(1); });
