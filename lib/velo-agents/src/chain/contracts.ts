@@ -113,3 +113,82 @@ export async function getChainDomainSeparator(): Promise<string> {
   const orch = getOrchestrator();
   return await orch.domainSeparator();
 }
+
+// ── Agent self-registration ────────────────────────────────────────────────
+//
+// Skills (keccak256 of string) that each agent advertises on-chain.
+// These match what the AgentRegistry test queries via agentsBySkill().
+//
+//   Form Agent     → "vision.pose"    (MediaPipe pose analysis)
+//   Prescriber     → "coaching.tactics" (drill/prescription generation)
+//
+// Both agents also carry "velo.v1" so they can be found as a pair.
+
+import { keccak256, toUtf8Bytes } from "ethers";
+
+const skill = (s: string): string => keccak256(toUtf8Bytes(s));
+
+const FORM_SKILLS     = [skill("vision.pose"),        skill("velo.v1")];
+const PRESCRIBER_SKILLS = [skill("coaching.tactics"), skill("velo.v1")];
+
+export async function registerAgentsOnChain(apiBase: string): Promise<void> {
+  if (!config.contracts.agentRegistry) {
+    log.warn("AGENT_REGISTRY_ADDRESS not set — skipping on-chain registration");
+    return;
+  }
+
+  const formWallet       = getFormAgentWallet();
+  const prescriberWallet = getPrescriberWallet();
+  const reg              = getAgentRegistry();
+
+  await _ensureRegistered({
+    wallet:    formWallet,
+    reg,
+    name:      "Velo Form Analyst",
+    endpoint:  `${apiBase}/api/healthz`,
+    skills:    FORM_SKILLS,
+    feeWei:    0n,
+    agentType: "Form",
+  });
+
+  await _ensureRegistered({
+    wallet:    prescriberWallet,
+    reg,
+    name:      "Velo Prescriber",
+    endpoint:  `${apiBase}/api/healthz`,
+    skills:    PRESCRIBER_SKILLS,
+    feeWei:    0n,
+    agentType: "Prescriber",
+  });
+}
+
+async function _ensureRegistered(opts: {
+  wallet:    ethers.Wallet;
+  reg:       ethers.Contract;
+  name:      string;
+  endpoint:  string;
+  skills:    string[];
+  feeWei:    bigint;
+  agentType: string;
+}): Promise<void> {
+  const { wallet, reg, name, endpoint, skills, feeWei, agentType } = opts;
+  const regWithSigner = reg.connect(wallet) as ethers.Contract;
+
+  const already = await reg.isRegistered(wallet.address);
+
+  if (already) {
+    const agent = await reg.getAgent(wallet.address);
+    if (!agent.active) {
+      log.info(`${agentType} Agent inactive — re-activating`, { address: wallet.address });
+      await (await (regWithSigner as any).setActive(true)).wait();
+    } else {
+      log.info(`${agentType} Agent already registered`, { address: wallet.address });
+    }
+    return;
+  }
+
+  log.info(`Registering ${agentType} Agent on-chain…`, { address: wallet.address, name });
+  const tx = await (regWithSigner as any).register(name, endpoint, skills, feeWei);
+  const rc = await tx.wait();
+  log.info(`${agentType} Agent registered`, { txHash: rc.hash, address: wallet.address });
+}

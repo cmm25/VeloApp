@@ -1,10 +1,11 @@
 import "dotenv/config";
 import { makeLogger } from "./utils/logger.js";
-import { validateRequiredForAgents } from "./utils/config.js";
+import { validateRequiredForAgents, config } from "./utils/config.js";
 import { startServer } from "./api/server.js";
 import { startWatcher } from "./chain/watcher.js";
 import { handleJobRequested } from "./agents/form-agent.js";
 import { handleFormReceiptSubmitted } from "./agents/prescriber-agent.js";
+import { registerAgentsOnChain } from "./chain/contracts.js";
 
 const log = makeLogger("runner");
 
@@ -19,6 +20,15 @@ async function main() {
 
   // Start the API server (healthz + receipt indexer + auth + pinata sign)
   await startServer();
+
+  // Register both agents on-chain with their skills so agentsBySkill() works.
+  // Safe to call every startup — skips silently if already registered.
+  const apiBase = `http://localhost:${config.api.port}`;
+  await registerAgentsOnChain(apiBase).catch((err) => {
+    log.warn("On-chain agent registration failed (non-fatal — agents can still process jobs)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
 
   // Start the chain event watcher
   const stopWatcher = await startWatcher({
