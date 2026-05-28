@@ -1,0 +1,103 @@
+Yes, this makes sense and is architecturally sound. Let me go through it section by section with honest notes on each step.
+
+---
+
+## What Is Correct and Strong
+
+**The event-driven trigger** — catching JobRequested via WebSocket with a poll fallback is the right pattern for Somnia. Sub-second finality means WebSocket usually fires immediately, but the poll fallback protects against missed events during reconnects. Solid.
+
+**The priorReceiptHash chain** — this is the most important security primitive in the whole design. FormAgent sets priorReceiptHash = bytes32(0) because there is no prior receipt. PrescriberAgent calls getFormReceipt() on-chain, reconstructs the digest via ReceiptLib, and passes it as priorReceiptHash. The contract then verifies these match before accepting the prescription. This means the prescription is cryptographically bound to the exact form receipt that was written on-chain. Nobody can fake the handoff. This is already in your contracts and it is genuinely novel.
+
+**EIP-712 signing per agent** — separate EOAs, separate nonces, separate signatures. The two agents are provably distinct on-chain actors, not one process wearing two hats.
+
+**AthleteSBT.appendReceipt() at the end** — the athlete gets a permanent, non-transferable record of every prescription. This is what makes the coaching record portable and verifiable for federations, sponsors, and future coaches.
+
+**Zod-validated output from Groq** — structured output enforcement means the pipeline fails loudly on a bad LLM response rather than silently passing garbage downstream to the contract.
+
+---
+
+## One Correction — The Supabase Storage Step
+
+There is a mismatch here worth fixing before you build it.
+
+You wrote: FormAgent fetches video from Supabase Storage using jobId→videoCid lookup.
+
+The issue is that videoCid is an IPFS CID — it is the identifier of the video on IPFS, not a Supabase Storage path. The coach posts the videoCid on-chain when they call payJob or postBounty. The FormAgent can read it directly from the JobRequested event — it does not need a Supabase lookup to find it.
+
+The corrected flow for that step:
+
+```
+Somnia emits JobRequested(jobId, coach, athlete, videoCid, deadline)
+        ↓
+FormAgent reads videoCid directly from the event
+        ↓
+Fetches video from IPFS gateway using videoCid
+(e.g. https://gateway.pinata.cloud/ipfs/{videoCid})
+        ↓
+Passes video URL to velo-engine POST /analyze
+```
+
+Supabase is still useful for storing the processed results for the API server to read — specifically the FormReport JSON and prescription text so the frontend can display them without hitting the IPFS gateway on every page load. But Supabase is not needed to resolve the video. The videoCid is already on-chain in the event.
+
+---
+
+## One Gap — Video Upload Flow
+
+The flow above assumes the video is already on IPFS when the coach posts the bounty. That means the coach must pin their video to IPFS before or during the bounty post, so the CID is available to put on-chain.
+
+Your api-server has a Pinata upload proxy at POST /api/pinata/upload. The NewJob UI page needs to call this endpoint first, get back an IPFS CID, then use that CID when calling postBounty on-chain. Make sure this is wired correctly in the NewJob flow — the CID must exist on IPFS before the transaction lands on Somnia.
+
+---
+
+## The Corrected Full Flow
+
+```
+Coach uploads video via NewJob UI
+        ↓
+Frontend calls POST /api/pinata/upload → gets videoCid
+        ↓
+Frontend calls postBounty(athlete, videoCid, deadline) on Somnia
+        ↓
+Somnia emits JobRequested(jobId, coach, athlete, videoCid, deadline)
+        ↓
+velo-agents catches event (WebSocket + poll fallback)
+        ↓
+FormAgent reads videoCid from event
+Fetches video from IPFS gateway
+Calls velo-engine POST /analyze with video URL
+        ↓
+MediaPipe extracts landmarks, computes joint angles
+Stroke phase classification: preparation → contact → follow-through
+Returns TennisTelemetry JSON
+        ↓
+FormAgent sends telemetry to Groq → Zod-validated FormReport JSON
+Pins full report to Pinata → ipfsCid
+Computes summaryHash = keccak256(report bytes)
+EIP-712 signs Receipt (priorReceiptHash = bytes32(0))
+Calls submitFormReceipt() on Somnia → emits FormReceiptSubmitted
+Stores FormReport in Supabase for API server
+        ↓
+PrescriberAgent catches FormReceiptSubmitted
+Calls getFormReceipt(jobId) ON-CHAIN
+Reconstructs priorReceiptHash = ReceiptLib.digest(formReceipt)
+Sends FormReport to Groq → Prescription JSON
+Pins prescription to Pinata → ipfsCid
+EIP-712 signs with correct priorReceiptHash
+Calls submitPrescription() → escrow splits 40/60 → AthleteSBT.appendReceipt()
+Stores prescription in Supabase for API server
+        ↓
+Frontend polls GET /api/receipts/:jobId
+Displays form report, prescription, on-chain receipt,
+Somnia explorer link, and athlete SBT update to coach
+```
+
+---
+
+## Summary
+
+The architecture is correct. The two things to tighten before building:
+
+1. Remove the Supabase video lookup — read videoCid from the on-chain event directly and fetch from IPFS
+2. Make sure the NewJob UI pins the video to IPFS before calling postBounty, so the CID is valid when the event fires
+
+Everything else in your flow is sound. Want me to help write the NewJob UI page or the FormAgent event handler next?
