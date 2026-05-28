@@ -1,0 +1,58 @@
+# ── Replit auto-attached files ───────────────────────────────────────────────
+attached_assets/
+.local/
+
+# ── Node / TypeScript ────────────────────────────────────────────────────────
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.npm
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+*.dist-info/
+
+# ── Environment & secrets ────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# keep .env.example files (they are templates, not secrets)
+!.env.example
+
+# ── Hardhat / Foundry ────────────────────────────────────────────────────────
+Hardhat/artifacts/
+Hardhat/cache/
+Hardhat/typechain-types/
+Hardhat/coverage/
+Hardhat/coverage.json
+
+# ── OS & editor ──────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.code-workspace
+
+# ── Logs ────────────────────────────────────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.pdf
+*.zip
+*.tar.gz
+tmp/
+temp/
