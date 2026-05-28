@@ -23,7 +23,11 @@ export const AGENT_REGISTRY_ABI = [
   "function isActive(address agent) view returns (bool)",
   "function isRegistered(address agent) view returns (bool)",
   "function register(string name, string endpoint, bytes32[] skills, uint256 feeWei)",
+  "function update(string name, string endpoint, bytes32[] skills, uint256 feeWei)",
+  "function setActive(bool active)",
   "function getAgent(address agent) view returns ((string name, string endpoint, bytes32[] skills, uint256 feeWei, bool active, bool exists, uint64 registeredAt, uint64 updatedAt))",
+  "function agentsBySkill(bytes32 skill) view returns (address[])",
+  "function listAgents() view returns (address[])",
 ] as const;
 
 // Job status enum mirrors JobStatus in IVeloOrchestrator.sol
