@@ -1,10 +1,9 @@
-import hre from "hardhat";
+import { network } from "hardhat";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ethers = (hre as any).ethers;
-const networkName: string = (hre as any).network?.name ?? process.env.HARDHAT_NETWORK ?? "hardhat";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Test script — submits a job as the coach wallet and waits for both agent receipts.
 // Run after deploy.ts and register-agents.ts.
@@ -14,7 +13,7 @@ const networkName: string = (hre as any).network?.name ?? process.env.HARDHAT_NE
 //     npx hardhat run scripts/demo-job.ts --network somniaTestnet
 
 async function main() {
-  const net = networkName;
+  const { ethers, networkName: net } = await network.connect();
   const file = path.resolve(__dirname, "../../deployments", `${net}.json`);
   if (!fs.existsSync(file)) throw new Error(`No deployment at ${file} — run deploy.ts first`);
 
