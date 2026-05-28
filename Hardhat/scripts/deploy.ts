@@ -1,12 +1,9 @@
-import hre from "hardhat";
+import { network } from "hardhat";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
-// hre.ethers is injected by @nomicfoundation/hardhat-ethers at runtime.
-// TypeScript doesn't see plugin augmentations without a cast in v3.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ethers = (hre as any).ethers;
-const networkName: string = (hre as any).network?.name ?? process.env.HARDHAT_NETWORK ?? "hardhat";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 interface Deployment {
   network: string;
@@ -29,22 +26,29 @@ function safeLower(v: unknown): string {
   return (v?.toString?.() ?? "").toLowerCase();
 }
 
-function parseFee(env?: string, fallback = "0.001") {
-  return ethers.parseEther(env && env.length > 0 ? env : fallback);
-}
-
-async function hasBytecode(addr: string): Promise<boolean> {
-  try {
-    const code = await ethers.provider.getCode(addr);
-    return code !== "0x" && code !== "0x0";
-  } catch {
-    return false;
-  }
-}
-
 async function main() {
-  const [deployer] = await ethers.getSigners();
-  const net = networkName;
+  const { ethers, networkName: net } = await network.connect();
+
+  function parseFee(env?: string, fallback = "0.001") {
+    return ethers.parseEther(env && env.length > 0 ? env : fallback);
+  }
+
+  async function hasBytecode(addr: string): Promise<boolean> {
+    try {
+      const code = await ethers.provider.getCode(addr);
+      return code !== "0x" && code !== "0x0";
+    } catch {
+      return false;
+    }
+  }
+
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
+  if (!deployer) {
+    throw new Error(
+      "No deployer account. Set DEPLOYER_PRIVATE_KEY in Hardhat/.env (64 hex chars, with or without 0x).",
+    );
+  }
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
   console.log(`\nDeployer:  ${deployer.address}`);
