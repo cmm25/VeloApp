@@ -56,3 +56,7 @@ yarn-error.log*
 *.tar.gz
 tmp/
 temp/
+
+# ── Replit (environment config — kept local, not committed) ───────────────────
+.replit
+replit.nix
