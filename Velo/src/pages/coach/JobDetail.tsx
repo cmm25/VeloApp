@@ -33,6 +33,7 @@ import {
   fetchIndexedReceipts,
   type IndexedEntry,
   type IndexedReceipts,
+  type AiProvenance,
 } from "@/lib/web3/indexer";
 import { somniaTestnet } from "@/lib/web3/chain";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
@@ -48,6 +49,8 @@ import {
   Loader2,
   Hash,
   Database,
+  Cpu,
+  Zap,
 } from "lucide-react";
 import { AgentStatusBadge } from "@/components/AgentStatusBadge";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
@@ -574,6 +577,8 @@ function ReceiptStage({
 
             {render(receipt, ipfsQuery.data ?? null)}
 
+            <SomniaProvenancePanel provenance={indexedEntry?.provenance ?? null} />
+
             <ReceiptIntegrityPanel
               kind={kind}
               jobId={jobId}
@@ -585,6 +590,85 @@ function ReceiptStage({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------- Somnia native-agent provenance ----------
+
+/**
+ * Shows whether this AI step was produced by Somnia's native LLM Inference
+ * agent (consensus-verified, with an on-chain receipt) or by the off-chain
+ * Groq fallback — and links to the public consensus receipt by request ID.
+ */
+function SomniaProvenancePanel({ provenance }: { provenance: AiProvenance | null }) {
+  if (!provenance) return null;
+  const isNative = provenance.path === "native";
+  const somnia = provenance.somnia;
+
+  return (
+    <div
+      className={`mt-4 rounded-sm border p-4 ${
+        isNative
+          ? "border-amber/30 bg-amber/[0.04]"
+          : "border-border/50 bg-background/40"
+      }`}
+    >
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="flex items-center gap-2">
+          {isNative ? (
+            <Cpu className="w-4 h-4 text-amber" />
+          ) : (
+            <Zap className="w-4 h-4 text-muted-foreground" />
+          )}
+          <span className="text-[10px] uppercase tracking-widest font-bold text-chalk/80">
+            {isNative ? "Somnia Native Agent" : "Groq Fallback"}
+          </span>
+        </div>
+        <span
+          className={`text-[9px] uppercase tracking-widest font-bold px-1.5 py-0.5 rounded-sm border ${
+            isNative
+              ? "border-amber/40 bg-amber/10 text-amber"
+              : "border-border/60 bg-card text-muted-foreground"
+          }`}
+        >
+          {isNative ? "Consensus" : "Off-chain"}
+        </span>
+      </div>
+
+      {isNative ? (
+        <>
+          <p className="text-xs text-muted-foreground leading-relaxed mb-3">
+            Reasoned on Somnia's Agentic L1 by the native LLM Inference agent and
+            verified by validator consensus.
+          </p>
+          <div className="space-y-1.5 text-[11px] font-mono">
+            {somnia?.requestId && (
+              <Row label="Request ID" value={somnia.requestId} />
+            )}
+            {somnia?.agentId && <Row label="Agent ID" value={somnia.agentId} />}
+            {somnia?.consensusStatus && (
+              <Row label="Consensus" value={somnia.consensusStatus} tone="amber" />
+            )}
+          </div>
+          {somnia?.receiptUrl && (
+            <a
+              href={somnia.receiptUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+            >
+              View consensus receipt <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          Somnia native agents were unavailable, so this verdict was produced by
+          the off-chain fallback model.
+          {provenance.fallbackReason ? ` (${provenance.fallbackReason})` : ""}
+        </p>
+      )}
     </div>
   );
 }
