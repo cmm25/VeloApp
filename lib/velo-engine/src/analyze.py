@@ -30,7 +30,7 @@ import numpy as np
 import mediapipe as mp
 import httpx
 
-from models import (
+from .models import (
     TennisTelemetry,
     JointAngles,
     StrokePhaseData,
