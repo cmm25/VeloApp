@@ -62,8 +62,19 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    // Replit serves the preview through a proxied iframe on a different host.
+    allowedHosts: true,
     fs: {
       strict: false,
+    },
+    // Dev-only: the uploader (uploader.ts) calls relative `/api/...` which is
+    // served by the velo-agents runner. Proxy those to it so SIWE auth + Pinata
+    // sign-upload work in local dev. Override the target with VELO_API_TARGET.
+    proxy: {
+      "/api": {
+        target: process.env.VELO_API_TARGET || "http://localhost:3001",
+        changeOrigin: true,
+      },
     },
   },
 });
