@@ -6,6 +6,8 @@ import healthRouter from "./routes/health.js";
 import authRouter from "./routes/auth.js";
 import pinataRouter from "./routes/pinata.js";
 import receiptsRouter from "./routes/receipts.js";
+import tapesRouter from "./routes/tapes.js";
+import athletesRouter from "./routes/athletes.js";
 
 const log = makeLogger("api");
 
@@ -19,6 +21,8 @@ export function createServer() {
   app.use("/api/auth", authRouter);
   app.use("/api/pinata", pinataRouter);
   app.use("/api/receipts", receiptsRouter);
+  app.use("/api/tapes", tapesRouter);
+  app.use("/api/athletes", athletesRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });
@@ -37,6 +41,12 @@ export function startServer(): Promise<void> {
       log.info(`  POST /api/auth/verify`);
       log.info(`  POST /api/pinata/sign-upload`);
       log.info(`  GET  /api/receipts/:jobId`);
+      log.info(`  GET  /api/tapes/:address`);
+      log.info(`  POST /api/tapes`);
+      log.info(`  DEL  /api/tapes/:id`);
+      log.info(`  GET  /api/athletes`);
+      log.info(`  PUT  /api/athletes/:address`);
+      log.info(`  POST /api/athletes/verify-claim`);
       resolve();
     });
   });

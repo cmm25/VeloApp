@@ -71,6 +71,23 @@ CREATE TABLE IF NOT EXISTS athletes (
 
 CREATE INDEX IF NOT EXISTS idx_athletes_wallet ON athletes (wallet_address);
 
+-- ── tapes ────────────────────────────────────────────────────────────────────
+-- Athlete-owned video library. Reads are public; writes go through the agent
+-- runner's SIWE-authenticated /api/tapes routes (service key), so only the
+-- wallet matching the address may add or remove its own tapes.
+CREATE TABLE IF NOT EXISTS tapes (
+    id              BIGSERIAL PRIMARY KEY,
+    wallet_address  TEXT NOT NULL,
+    cid             TEXT NOT NULL,             -- IPFS CID (or local:sha256 in demo)
+    label           TEXT,
+    size_bytes      BIGINT,
+    content_type    TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_tapes_wallet  ON tapes (wallet_address);
+CREATE INDEX IF NOT EXISTS idx_tapes_created ON tapes (created_at);
+
 -- ── telemetry ────────────────────────────────────────────────────────────────
 -- Raw MediaPipe output per job (off-chain only — too large for IPFS/chain).
 -- Full TennisTelemetry JSON from velo-engine.
@@ -143,20 +160,42 @@ CREATE OR REPLACE TRIGGER athletes_updated_at
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ── Row Level Security (RLS) ─────────────────────────────────────────────────
--- Enable RLS on all tables — service key bypasses, anon key is read-only for receipts.
+-- Strategy:
+--   • The velo-agents service key bypasses RLS entirely (all writes go through it).
+--   • The anon key is PUBLIC-READ-ONLY for the tables the frontend reads directly
+--     (receipts, jobs, athletes, tapes) and has NO access at all to sensitive
+--     tables (telemetry, agent_runs, upload_sessions).
+--   • No table grants anon INSERT/UPDATE/DELETE — every mutation is mediated by
+--     the authenticated /api routes.
 
-ALTER TABLE receipts  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE jobs      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE athletes  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE telemetry ENABLE ROW LEVEL SECURITY;
-ALTER TABLE agent_runs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE receipts        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE jobs            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE athletes        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tapes           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE telemetry       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agent_runs      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE upload_sessions ENABLE ROW LEVEL SECURITY;
 
--- Public read for receipts (frontend needs this without auth)
+-- Public (anon) read-only policies for frontend-facing tables.
+DROP POLICY IF EXISTS "receipts_read_public" ON receipts;
 CREATE POLICY "receipts_read_public" ON receipts
     FOR SELECT USING (true);
 
--- Service role has full access (used by velo-agents)
--- Note: service key bypasses RLS automatically in Supabase
+DROP POLICY IF EXISTS "jobs_read_public" ON jobs;
+CREATE POLICY "jobs_read_public" ON jobs
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "athletes_read_public" ON athletes;
+CREATE POLICY "athletes_read_public" ON athletes
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "tapes_read_public" ON tapes;
+CREATE POLICY "tapes_read_public" ON tapes
+    FOR SELECT USING (true);
+
+-- telemetry, agent_runs and upload_sessions have RLS enabled but NO policies,
+-- so the anon key can neither read nor write them. Only the service key (which
+-- bypasses RLS) touches these tables, via the agent runner.
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Sample queries used by the API server
