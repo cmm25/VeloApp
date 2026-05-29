@@ -49,25 +49,50 @@ export default function DeleteAccount() {
       toast.error('Type "DELETE" to confirm');
       return;
     }
+
+    // The on-chain tx is the source of truth, so resolve the target contract
+    // up front and fail clearly if the deployment is missing it.
+    const target = role === "athlete" ? sbt : coachReg;
+    if (!target) {
+      toast.error("Deletion unavailable", {
+        description:
+          role === "athlete"
+            ? "AthleteSBT address is missing from the deployment."
+            : "CoachRegistry address is missing from the deployment.",
+      });
+      return;
+    }
+
     try {
+      // Best-effort server-side wipe. This requires a SIWE session against the
+      // agent runner API; if that API is down or the route is absent, we must
+      // NOT block the on-chain deletion (the part that actually releases the
+      // role). Swallow any failure here and continue to the chain tx.
       setBusy("server");
-      const res = await apiAuthFetch("/api/account", { method: "DELETE" });
-      if (!res.ok && res.status !== 404) {
-        const body = await res.text();
-        throw new Error(`Server delete failed: ${res.status} ${body}`);
+      try {
+        const res = await apiAuthFetch("/api/account", { method: "DELETE" });
+        if (!res.ok && res.status !== 404) {
+          const body = await res.text().catch(() => "");
+          console.warn(`Server-side account wipe failed: ${res.status} ${body}`);
+        }
+      } catch (serverErr) {
+        console.warn(
+          "Server-side account wipe skipped (API unreachable):",
+          serverErr,
+        );
       }
 
       setBusy("chain");
       const hash =
         role === "athlete"
           ? await writeContractAsync({
-              address: sbt!,
+              address: target,
               abi: athleteSbtRoleAbi,
               functionName: "burn",
               args: [],
             })
           : await writeContractAsync({
-              address: coachReg!,
+              address: target,
               abi: coachRegistryAbi,
               functionName: "deregister",
               args: [],
@@ -172,7 +197,7 @@ export default function DeleteAccount() {
           />
           <div className="flex gap-2">
             <button
-              onClick={() => setLocation(-1 as unknown as string)}
+              onClick={() => window.history.back()}
               disabled={busy !== "idle"}
               className="px-4 py-2 text-xs uppercase tracking-widest font-bold border border-border/60 text-chalk/80 hover:bg-border/30 rounded-sm"
             >
