@@ -60,3 +60,6 @@ temp/
 # ── Replit (environment config — kept local, not committed) ───────────────────
 .replit
 replit.nix
+
+# ── Reference folders  ───────────────────
+/reference-files-eshaan/
