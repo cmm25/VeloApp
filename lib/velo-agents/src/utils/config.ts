@@ -19,6 +19,12 @@ function optionalInt(key: string, fallback: number): number {
   return isNaN(n) ? fallback : n;
 }
 
+function optionalBool(key: string, fallback: boolean): boolean {
+  const v = process.env[key];
+  if (v === undefined) return fallback;
+  return ["1", "true", "yes", "on"].includes(v.trim().toLowerCase());
+}
+
 export const config = {
   somnia: {
     rpcUrl: optional("SOMNIA_RPC_URL", "https://dream-rpc.somnia.network"),
@@ -35,6 +41,39 @@ export const config = {
   agents: {
     formPrivateKey: optional("AGENT_FORM_PRIVATE_KEY"),
     prescriberPrivateKey: optional("AGENT_PRESCRIBER_PRIVATE_KEY"),
+  },
+
+  // ── Somnia native Agentic L1 (SomniaAgents / IAgentRequester platform) ──────
+  // When enabled, AI reasoning is produced by Somnia's native LLM Inference
+  // agent (consensus-verified, with on-chain receipts) and falls back to Groq
+  // automatically on timeout / unavailability / insufficient runners.
+  somniaAgents: {
+    enabled: optionalBool("SOMNIA_AGENTS_ENABLED", true),
+    // SomniaAgents platform contract (IAgentRequester). Testnet default.
+    //   Testnet: 0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776 (chainId 50312)
+    //   Mainnet: 0x5E5205CF39E766118C01636bED000A54D93163E6 (chainId 5031)
+    contract: optional(
+      "SOMNIA_AGENTS_CONTRACT",
+      "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776"
+    ),
+    // Live agent IDs from https://agents.testnet.somnia.network/ — the LLM
+    // Inference agent ID must be set for the native path to activate.
+    llmAgentId: optional("SOMNIA_LLM_AGENT_ID", ""),
+    // JSON API Request agent — id 13174292974160097713 in the docs oracle example.
+    jsonApiAgentId: optional("SOMNIA_JSON_API_AGENT_ID", "13174292974160097713"),
+    // Deposit sizing: deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize
+    subcommitteeSize: optionalInt("SOMNIA_AGENTS_SUBCOMMITTEE", 3),
+    pricePerAgentWei: optional("SOMNIA_AGENTS_PRICE_PER_AGENT_WEI", "30000000000000000"), // 0.03 STT
+    // How long the runner polls getRequest() for consensus before falling back (ms).
+    requestTimeoutMs: optionalInt("SOMNIA_AGENTS_TIMEOUT_MS", 45_000),
+    pollIntervalMs: optionalInt("SOMNIA_AGENTS_POLL_MS", 2_000),
+    // On-chain request deadline buffer (seconds) passed to createRequest.
+    deadlineBufferSec: optionalInt("SOMNIA_AGENTS_DEADLINE_SEC", 300),
+    // Base URL for the public consensus receipt viewer (linked from the UI).
+    receiptBaseUrl: optional(
+      "SOMNIA_AGENTS_RECEIPT_URL",
+      "https://agents.testnet.somnia.network"
+    ),
   },
 
   ai: {

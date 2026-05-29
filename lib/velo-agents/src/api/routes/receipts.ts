@@ -38,6 +38,7 @@ router.get("/:jobId", async (req: Request, res: Response) => {
           txHash: stored.form.txHash,
           blockNumber: stored.form.blockNumber,
           report: stored.form.report ?? null,
+          provenance: stored.form.provenance ?? null,
           explorerUrl: explorerTxUrl(stored.form.txHash),
         }
       : null,
@@ -48,6 +49,7 @@ router.get("/:jobId", async (req: Request, res: Response) => {
           txHash: stored.prescription.txHash,
           blockNumber: stored.prescription.blockNumber,
           report: stored.prescription.report ?? null,
+          provenance: stored.prescription.provenance ?? null,
           explorerUrl: explorerTxUrl(stored.prescription.txHash),
         }
       : null,
