@@ -109,6 +109,8 @@ export const config = {
   watcher: {
     pollIntervalMs: optionalInt("POLL_INTERVAL_MS", 2000),
     startBlock: optionalInt("START_BLOCK", 0),
+    /** Somnia testnet WS often returns 502; polling is always on. Set true to try WS too. */
+    useWebSocket: optionalBool("WATCHER_USE_WEBSOCKET", false),
   },
 } as const;
 
