@@ -50,33 +50,48 @@ router.post(
     }
 
     try {
-      // Get a Pinata presigned upload URL
-      const pinataDomain = "https://uploads.pinata.cloud/v3/files";
-      const keyRes = await fetch(
-        `https://api.pinata.cloud/v3/files/sign?filename=${encodeURIComponent(filename)}&expires=900`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${config.ipfs.pinataJwt}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            date: Math.floor(Date.now() / 1000),
-            expires: 900,
-            keyvalues: { "velo-upload": "true" },
-          }),
-        }
-      );
+      // v3 presigned uploads: https://uploads.pinata.cloud/v3/files/sign (not api.pinata.cloud)
+      // JWT must include org:files:write — see Pinata API Keys in the dashboard.
+      const expiresSec = 900;
+      const signBody = {
+        network: "public",
+        date: Math.floor(Date.now() / 1000),
+        expires: expiresSec,
+        filename,
+        // Cap at server max, not exact file.size — multipart overhead exceeds raw bytes.
+        max_file_size: MAX_UPLOAD_BYTES,
+        allow_mime_types: [contentType, "video/*"],
+        keyvalues: { "velo-upload": "true" },
+      };
+
+      const keyRes = await fetch("https://uploads.pinata.cloud/v3/files/sign", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${config.ipfs.pinataJwt}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(signBody),
+      });
 
       if (!keyRes.ok) {
         const t = await keyRes.text().catch(() => "");
         log.error("Pinata sign failed", { status: keyRes.status, body: t });
-        res.status(502).json({ error: "Failed to get Pinata upload URL" });
+        const hint =
+          keyRes.status === 403
+            ? "Pinata JWT lacks org:files:write or is invalid — regenerate key with file upload permissions"
+            : undefined;
+        res.status(502).json({
+          error: "Failed to get Pinata upload URL",
+          ...(hint ? { hint } : {}),
+        });
         return;
       }
 
-      const keyJson = (await keyRes.json()) as { url?: string; data?: { url?: string } };
-      const uploadUrl = keyJson.url ?? keyJson.data?.url ?? null;
+      const keyJson = (await keyRes.json()) as { data?: string | { url?: string } };
+      const uploadUrl =
+        typeof keyJson.data === "string"
+          ? keyJson.data
+          : (keyJson.data?.url ?? null);
 
       if (!uploadUrl) {
         res.status(502).json({ error: "Pinata did not return an upload URL" });

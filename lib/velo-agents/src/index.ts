@@ -9,6 +9,13 @@ import { registerAgentsOnChain } from "./chain/contracts.js";
 
 const log = makeLogger("runner");
 
+// WebSocket handshake failures on Somnia are async; log instead of crashing the runner.
+process.on("unhandledRejection", (reason) => {
+  log.error("Unhandled rejection (runner stays up)", {
+    error: reason instanceof Error ? reason.message : String(reason),
+  });
+});
+
 async function main() {
   log.info("═══════════════════════════════════════════════");
   log.info("  Velo Agent Runner");
