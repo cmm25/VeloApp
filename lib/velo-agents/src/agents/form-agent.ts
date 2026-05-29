@@ -4,7 +4,7 @@ import { makeLogger } from "../utils/logger.js";
 import { withRetry } from "../utils/retry.js";
 import { resolveVideoUrl } from "../ipfs/pinata.js";
 import { pinJson } from "../ipfs/pinata.js";
-import { callAI } from "../ai/groq.js";
+import { reason } from "../ai/dispatch.js";
 import { buildFormAnalysisPrompt } from "../ai/prompts.js";
 import { FormReportSchema, type TennisTelemetry } from "../ai/schemas.js";
 import {
@@ -57,16 +57,29 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
         score: telemetry.symmetryScore,
       });
 
-      // 3. AI form analysis
+      // 3. AI form analysis — Somnia native LLM agent (consensus) → Groq fallback
       const prompt = buildFormAnalysisPrompt(telemetry);
-      const formReport = await callAI(prompt, FormReportSchema, "form-analysis");
+      const { data: formReport, provenance } = await reason({
+        prompt,
+        schema: FormReportSchema,
+        label: "form-analysis",
+        signer: wallet,
+      });
       log.info("Form report generated", {
         score: formReport.overallScore,
         issueCount: formReport.issues.length,
+        path: provenance.path,
+        somniaRequestId: provenance.somnia?.requestId,
       });
 
-      // 4. Pin full report to IPFS
-      const reportPayload = { type: "velo/form-report/v1", jobId, telemetry, formReport };
+      // 4. Pin full report to IPFS (provenance recorded for auditability)
+      const reportPayload = {
+        type: "velo/form-report/v1",
+        jobId,
+        telemetry,
+        formReport,
+        provenance,
+      };
       const { cid: ipfsCid } = await pinJson(reportPayload, `form-report-${jobId.slice(0, 10)}`);
 
       // 5. Build receipt
@@ -120,6 +133,7 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
           txHash: txReceipt.hash,
           blockNumber: txReceipt.blockNumber.toString(),
           report: formReport,
+          provenance,
         },
         prescription: null,
       });

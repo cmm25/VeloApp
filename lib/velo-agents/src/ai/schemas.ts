@@ -85,6 +85,28 @@ export const PrescriptionReportSchema = z.object({
 
 export type PrescriptionReport = z.infer<typeof PrescriptionReportSchema>;
 
+// ── AI provenance (how each reasoning step was produced) ─────────────────────
+// Records whether a verdict came from Somnia's native consensus agent or the
+// Groq fallback, plus the on-chain request/receipt reference when native.
+
+export const SomniaAgentReceiptSchema = z.object({
+  requestId: z.string(),
+  agentId: z.string(),
+  txHash: z.string(),
+  consensusStatus: z.string(),
+  receipt: z.string().nullable(),
+  receiptUrl: z.string(),
+});
+
+export const AiProvenanceSchema = z.object({
+  path: z.enum(["native", "fallback"]),
+  agentType: z.literal("llm-inference"),
+  somnia: SomniaAgentReceiptSchema.optional(),
+  fallbackReason: z.string().optional(),
+});
+
+export type AiProvenance = z.infer<typeof AiProvenanceSchema>;
+
 // ── On-chain payload (what gets stored in Supabase + returned by API) ─────────
 
 export const StoredReceiptSchema = z.object({
@@ -106,6 +128,7 @@ export const StoredReceiptSchema = z.object({
     txHash: z.string(),
     blockNumber: z.string(),
     report: FormReportSchema.optional(),
+    provenance: AiProvenanceSchema.optional(),
   }).nullable(),
   prescription: z.object({
     receipt: z.object({
@@ -122,6 +145,7 @@ export const StoredReceiptSchema = z.object({
     txHash: z.string(),
     blockNumber: z.string(),
     report: PrescriptionReportSchema.optional(),
+    provenance: AiProvenanceSchema.optional(),
   }).nullable(),
 });
 

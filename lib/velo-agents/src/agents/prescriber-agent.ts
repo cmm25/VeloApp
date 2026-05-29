@@ -2,7 +2,7 @@ import { config } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
 import { withRetry } from "../utils/retry.js";
 import { pinJson } from "../ipfs/pinata.js";
-import { callAI } from "../ai/groq.js";
+import { reason } from "../ai/dispatch.js";
 import { buildPrescriptionPrompt } from "../ai/prompts.js";
 import { PrescriptionReportSchema, FormReportSchema } from "../ai/schemas.js";
 import {
@@ -78,16 +78,19 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         analysedAt: new Date().toISOString(),
       };
 
-      // 4. AI prescription generation
+      // 4. AI prescription — Somnia native LLM agent (consensus) → Groq fallback
       const prompt = buildPrescriptionPrompt(parsedFormReport);
-      const prescriptionReport = await callAI(
+      const { data: prescriptionReport, provenance } = await reason({
         prompt,
-        PrescriptionReportSchema,
-        "prescription"
-      );
+        schema: PrescriptionReportSchema,
+        label: "prescription",
+        signer: wallet,
+      });
       log.info("Prescription generated", {
         goal: prescriptionReport.sessionGoal,
         drillCount: prescriptionReport.drills.length,
+        path: provenance.path,
+        somniaRequestId: provenance.somnia?.requestId,
       });
 
       // 5. Pin prescription to IPFS
@@ -100,6 +103,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
           priorReceiptHash,
         },
         prescriptionReport,
+        provenance,
       };
       const { cid: ipfsCid } = await pinJson(
         prescriptionPayload,
@@ -161,6 +165,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
           txHash: txReceipt.hash,
           blockNumber: txReceipt.blockNumber.toString(),
           report: prescriptionReport,
+          provenance,
         },
       });
     },
