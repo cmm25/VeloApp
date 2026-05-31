@@ -72,7 +72,10 @@ export const config = {
     // How long the runner polls getRequest() for consensus before falling back (ms).
     // On-chain LLM inference across a subcommittee can take well over a minute.
     requestTimeoutMs: optionalInt("SOMNIA_AGENTS_TIMEOUT_MS", 120_000),
-    pollIntervalMs: optionalInt("SOMNIA_AGENTS_POLL_MS", 2_000),
+    // Poll briskly: an EOA must read a validator response out of the live Request
+    // struct before the platform deletes it on consensus, so a slow interval can
+    // miss the window. 1s balances catching the result against RPC load.
+    pollIntervalMs: optionalInt("SOMNIA_AGENTS_POLL_MS", 1_000),
     // Reserved for createAdvancedRequest; the basic createRequest path uses the
     // platform's default timeout, so this is currently unused.
     deadlineBufferSec: optionalInt("SOMNIA_AGENTS_DEADLINE_SEC", 300),

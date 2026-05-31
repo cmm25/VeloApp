@@ -42,6 +42,10 @@ const AGENT_REQUESTER_ABI = [
   "function createRequest(uint256 agentId, address callbackAddress, bytes4 callbackSelector, bytes payload) payable returns (uint256 requestId)",
   "function getRequestDeposit() view returns (uint256)",
   "function getRequest(uint256 requestId) view returns (tuple(uint256 id, address requester, address callbackAddress, bytes4 callbackSelector, address[] subcommittee, tuple(address validator, bytes result, uint8 status, uint256 receipt, uint256 timestamp, uint256 executionCost)[] responses, uint256 responseCount, uint256 failureCount, uint256 threshold, uint256 createdAt, uint256 deadline, uint8 status, uint8 consensusType, uint256 remainingBudget, uint256 perAgentBudget))",
+  // hasRequest lets us tell "not visible yet / transient RPC" apart from
+  // "finalized & removed from storage": after consensus the platform deletes the
+  // Request struct (gas reclaim), so getRequest then reverts RequestNotFound.
+  "function hasRequest(uint256 requestId) view returns (bool)",
   "event RequestCreated(uint256 indexed requestId, uint256 indexed agentId, uint256 perAgentBudget, bytes payload, address[] subcommittee)",
 ] as const;
 
@@ -145,7 +149,9 @@ export async function runLlmInference(
     "inferString",
     [userPrompt, systemPrompt, false, []]
   );
-  return dispatchRequest(config.somniaAgents.llmAgentId, payload, signer, "string");
+  // LLM Inference is deterministic (Qwen3, seed 0), so a single validator
+  // response equals consensus — safe to accept early and beat request deletion.
+  return dispatchRequest(config.somniaAgents.llmAgentId, payload, signer, "string", true);
 }
 
 /**
@@ -164,7 +170,9 @@ export async function runJsonApiRequest(
     "request",
     [url, jsonPath]
   );
-  return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string");
+  // JSON API responses are not guaranteed identical across validators, so do NOT
+  // accept a single early response here — require the platform's overall consensus.
+  return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string", false);
 }
 
 // ── Core request lifecycle ──────────────────────────────────────────────────
@@ -173,7 +181,8 @@ async function dispatchRequest(
   agentId: string,
   payload: string,
   signer: ethers.Wallet,
-  resultAbiType: string
+  resultAbiType: string,
+  allowEarlyResponse: boolean
 ): Promise<SomniaAgentResult> {
   const requester = getRequesterContract(signer);
   const pricePerAgent = BigInt(config.somniaAgents.pricePerAgentWei);
@@ -266,7 +275,12 @@ async function dispatchRequest(
   }
 
   // Poll getRequest() until consensus or local timeout.
-  const result = await pollForConsensus(requester, requestId, resultAbiType);
+  const result = await pollForConsensus(
+    requester,
+    requestId,
+    resultAbiType,
+    allowEarlyResponse
+  );
 
   return {
     output: result.output,
@@ -304,30 +318,54 @@ function extractRequestIdFromLogs(
 async function pollForConsensus(
   requester: ethers.Contract,
   requestId: bigint,
-  resultAbiType: string
+  resultAbiType: string,
+  allowEarlyResponse: boolean
 ): Promise<{ output: string; status: string; receiptId: string | null }> {
   const deadline = Date.now() + config.somniaAgents.requestTimeoutMs;
   let lastPollError: string | null = null;
+  let sawRequestAlive = false;
 
   while (Date.now() < deadline) {
     let req: any;
     try {
       req = await requester.getRequest(requestId);
       lastPollError = null;
+      sawRequestAlive = true;
     } catch (err) {
       lastPollError = errMsg(err);
+      // getRequest reverted. Distinguish a transient RPC blip from the request
+      // having been finalized + removed from storage (the platform deletes the
+      // Request struct on consensus, after which getRequest reverts forever).
+      const present = await requestStillExists(requester, requestId);
+      if (present === false) {
+        throw new SomniaAgentsUnavailable(
+          `Somnia agent request ${requestId} was finalized and removed before its ` +
+            `result could be read (the platform deletes requests on consensus, and an ` +
+            `EOA requester has no callback to receive it) — falling back`
+        );
+      }
+      // present === true (still pending) or null (hasRequest also failed): treat
+      // as transient and keep polling.
       log.debug("getRequest poll failed — retrying", { error: lastPollError });
       await sleep(config.somniaAgents.pollIntervalMs);
       continue;
     }
 
     const status = Number(req.status);
+    const captured = tryDecodeResponse(req, resultAbiType);
+
+    // Overall consensus already reached: take the result and we're done.
     if (status === ResponseStatus.Success) {
-      const decoded = decodeConsensusResult(req, resultAbiType);
-      log.info("Somnia agent consensus reached ✓", {
-        requestId: requestId.toString(),
-      });
-      return { output: decoded.output, status: "Success", receiptId: decoded.receiptId };
+      if (captured) {
+        log.info("Somnia agent consensus reached ✓", {
+          requestId: requestId.toString(),
+        });
+        return { output: captured.output, status: "Success", receiptId: captured.receiptId };
+      }
+      throw new SomniaAgentsUnavailable(
+        `Somnia agent request ${requestId} reached consensus but no decodable result ` +
+          `was present — falling back`
+      );
     }
     if (status === ResponseStatus.Failed) {
       throw new SomniaAgentsUnavailable(
@@ -342,21 +380,57 @@ async function pollForConsensus(
       );
     }
 
+    // Still Pending. For DETERMINISTIC agents (LLM inference), accept the first
+    // successful validator response now: it equals the eventual consensus value
+    // and grabbing it early wins the race against the post-consensus deletion of
+    // the Request struct. For non-deterministic agents we must wait for overall
+    // consensus above, since per-validator responses may differ.
+    if (allowEarlyResponse && captured) {
+      log.info("Somnia agent result captured early (deterministic agent) ✓", {
+        requestId: requestId.toString(),
+        overallStatus: statusName(status),
+      });
+      return { output: captured.output, status: "Success", receiptId: captured.receiptId };
+    }
+
     await sleep(config.somniaAgents.pollIntervalMs);
   }
 
   const rpcNote = lastPollError ? ` Last RPC error: ${lastPollError}.` : "";
+  const aliveNote = sawRequestAlive
+    ? " (request was readable but no validator response landed in our polling window)"
+    : "";
   throw new SomniaAgentsUnavailable(
     `Somnia agent request ${requestId} did not reach consensus within ` +
-      `${config.somniaAgents.requestTimeoutMs}ms (still Pending — raise SOMNIA_AGENTS_TIMEOUT_MS ` +
-      `or the per-agent reward).${rpcNote} Falling back`
+      `${config.somniaAgents.requestTimeoutMs}ms${aliveNote} — raise SOMNIA_AGENTS_TIMEOUT_MS ` +
+      `or lower SOMNIA_AGENTS_POLL_MS.${rpcNote} Falling back`
   );
 }
 
-function decodeConsensusResult(
+/**
+ * Best-effort check whether the platform still holds the request in storage.
+ * Returns true/false from `hasRequest`, or null if that call itself fails (so
+ * the caller can treat the situation as transient rather than terminal).
+ */
+async function requestStillExists(
+  requester: ethers.Contract,
+  requestId: bigint
+): Promise<boolean | null> {
+  try {
+    return Boolean(await requester.hasRequest(requestId));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Scan a request's validator responses for the first decodable successful
+ * result. Returns null when none is present yet (so polling can continue).
+ */
+function tryDecodeResponse(
   req: any,
   resultAbiType: string
-): { output: string; receiptId: string | null } {
+): { output: string; receiptId: string | null } | null {
   const responses = req.responses ?? [];
   for (const r of responses) {
     if (Number(r.status) === ResponseStatus.Success && r.result && r.result !== "0x") {
@@ -374,7 +448,7 @@ function decodeConsensusResult(
       }
     }
   }
-  throw new SomniaAgentsUnavailable("Consensus reached but no decodable result found");
+  return null;
 }
 
 function sleep(ms: number): Promise<void> {
