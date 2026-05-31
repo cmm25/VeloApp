@@ -15,8 +15,13 @@ const log = makeLogger("somnia-agents");
  *
  * Because the Velo agent runner is an off-chain EOA (not a smart contract that
  * can receive the platform callback), we drive the request synchronously:
- *   1. `createRequest()` with a correctly sized deposit
- *      (deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize)
+ *   1. `createRequest()` (the basic 4-arg form — uses the platform's default
+ *      subcommittee size of 3) with a correctly sized deposit:
+ *        deposit = getRequestDeposit() (operations-reserve floor)
+ *                + pricePerAgent × subcommitteeSize (agent reward pot)
+ *      The reward pot MUST clear the runner's per-agent price for the agent
+ *      type (LLM Inference = 0.07 STT today) or runners skip the request and
+ *      it times out. See docs.somnia.network/agents/invoking-agents/gas-fees.
  *   2. recover the requestId (static-call prediction + RequestCreated event)
  *   3. poll `getRequest(requestId)` until the request reaches consensus
  *      (Success / Failed / TimedOut) or our local timeout elapses
@@ -29,19 +34,28 @@ const log = makeLogger("somnia-agents");
 // ── ABIs ───────────────────────────────────────────────────────────────────
 
 // IAgentRequester — the SomniaAgents platform contract surface we need.
+// Signatures verified against docs.somnia.network/agents/invoking-agents/from-solidity.
+// NB: the basic createRequest takes ONLY 4 args (agentId, callback, selector,
+// payload) and uses the platform's default subcommittee size — subcommitteeSize,
+// threshold, consensusType and timeout belong to createAdvancedRequest.
 const AGENT_REQUESTER_ABI = [
-  "function createRequest(uint256 agentId, address callbackAddress, bytes4 callbackSelector, bytes payload, uint256 subcommitteeSize, uint256 deadline) payable returns (uint256 requestId)",
+  "function createRequest(uint256 agentId, address callbackAddress, bytes4 callbackSelector, bytes payload) payable returns (uint256 requestId)",
   "function getRequestDeposit() view returns (uint256)",
   "function getRequest(uint256 requestId) view returns (tuple(uint256 id, address requester, address callbackAddress, bytes4 callbackSelector, address[] subcommittee, tuple(address validator, bytes result, uint8 status, uint256 receipt, uint256 timestamp, uint256 executionCost)[] responses, uint256 responseCount, uint256 failureCount, uint256 threshold, uint256 createdAt, uint256 deadline, uint8 status, uint8 consensusType, uint256 remainingBudget, uint256 perAgentBudget))",
-  "event RequestCreated(uint256 indexed requestId, address indexed requester, uint256 agentId, uint256 perAgentBudget)",
+  "event RequestCreated(uint256 indexed requestId, uint256 indexed agentId, uint256 perAgentBudget, bytes payload, address[] subcommittee)",
 ] as const;
 
-// LLM Inference agent — `inferChat` returns a free-form string (we ask for JSON).
+// LLM Inference agent — `inferString(prompt, system, chainOfThought, allowedValues)`
+// returns a free-form string (we ask for JSON). Verified against
+// docs.somnia.network/agents/base-agents/llm-inference.
 const LLM_AGENT_ABI = [
-  "function inferChat(string systemPrompt, string userPrompt) returns (string)",
+  "function inferString(string prompt, string system, bool chainOfThought, string[] allowedValues) returns (string response)",
 ] as const;
 
-// JSON API Request agent — fetch a URL and extract a value by JSON path.
+// JSON API Request agent — NOTE: unverified/deferred. The live agent exposes
+// `fetchUint(string,string,uint8)` / `fetchString(...)`, not `request(...)`.
+// This path is not used by the Form/Prescriber flow; do not rely on it until
+// its ABI is verified against the agent explorer.
 const JSON_API_AGENT_ABI = [
   "function request(string url, string jsonPath) returns (string)",
 ] as const;
@@ -56,6 +70,11 @@ enum ResponseStatus {
 }
 
 const ZERO_SELECTOR = "0x00000000";
+
+// The basic createRequest uses the platform's default subcommittee size. The
+// reward pot is divided by THIS value on-chain, so we size the reward against it
+// (not a possibly-misconfigured env) to avoid underfunding -> runner skip -> timeout.
+const PLATFORM_DEFAULT_SUBCOMMITTEE = 3n;
 
 export interface SomniaAgentReceipt {
   requestId: string;
@@ -93,8 +112,10 @@ function statusName(s: number): string {
 }
 
 function buildReceiptUrl(requestId: string): string {
+  // Receipt viewer route is /receipts/<request-id> (testnet base:
+  // https://agents.testnet.somnia.network). See docs → invoking-agents/receipts.
   const base = config.somniaAgents.receiptBaseUrl.replace(/\/$/, "");
-  return `${base}/request/${requestId}`;
+  return `${base}/receipts/${requestId}`;
 }
 
 function getRequesterContract(signer: ethers.Wallet) {
@@ -117,9 +138,12 @@ export async function runLlmInference(
       "Somnia native agents not configured (set SOMNIA_AGENTS_ENABLED and SOMNIA_LLM_AGENT_ID)"
     );
   }
+  // inferString(prompt, system, chainOfThought, allowedValues): user prompt is
+  // first, system prompt second. We disable chain-of-thought (we want a single
+  // deterministic JSON answer) and leave allowedValues empty (unconstrained).
   const payload = new ethers.Interface([...LLM_AGENT_ABI]).encodeFunctionData(
-    "inferChat",
-    [systemPrompt, userPrompt]
+    "inferString",
+    [userPrompt, systemPrompt, false, []]
   );
   return dispatchRequest(config.somniaAgents.llmAgentId, payload, signer, "string");
 }
@@ -152,10 +176,21 @@ async function dispatchRequest(
   resultAbiType: string
 ): Promise<SomniaAgentResult> {
   const requester = getRequesterContract(signer);
-  const subSize = BigInt(config.somniaAgents.subcommitteeSize);
   const pricePerAgent = BigInt(config.somniaAgents.pricePerAgentWei);
+  // Size the reward against the platform default (what the contract actually
+  // divides by), not the env value — a misconfigured env must not underfund.
+  const subSize = PLATFORM_DEFAULT_SUBCOMMITTEE;
+  if (BigInt(config.somniaAgents.subcommitteeSize) !== subSize) {
+    log.warn(
+      `SOMNIA_AGENTS_SUBCOMMITTEE=${config.somniaAgents.subcommitteeSize} ignored — ` +
+        `basic createRequest uses the platform default (${subSize}); sizing reward against it.`
+    );
+  }
 
-  // Deposit = operations reserve + per-agent reward × subcommittee size.
+  // Deposit = operations-reserve floor + agent reward pot.
+  //   reserve = getRequestDeposit()          (= minPerAgentDeposit × default subSize)
+  //   reward  = pricePerAgent × subSize       (must clear the runner's per-agent
+  //                                            price or runners skip the request)
   let reserve: bigint;
   try {
     reserve = BigInt(await requester.getRequestDeposit());
@@ -164,11 +199,9 @@ async function dispatchRequest(
       `getRequestDeposit() failed — platform unreachable: ${errMsg(err)}`
     );
   }
-  const deposit = reserve + pricePerAgent * subSize;
-
-  const deadline = BigInt(
-    Math.floor(Date.now() / 1000) + config.somniaAgents.deadlineBufferSec
-  );
+  const reward = pricePerAgent * subSize;
+  const deposit = reserve + reward;
+  const perAgentBudget = subSize > 0n ? reward / subSize : 0n;
 
   // EOA requester: no contract callback, so pass zero address/selector and poll.
   const callbackAddress = ethers.ZeroAddress;
@@ -177,8 +210,16 @@ async function dispatchRequest(
   log.info("Creating Somnia agent request", {
     agentId,
     subSize: subSize.toString(),
+    reserveWei: reserve.toString(),
+    rewardWei: reward.toString(),
     depositWei: deposit.toString(),
+    perAgentBudgetWei: perAgentBudget.toString(),
   });
+  if (perAgentBudget === 0n) {
+    log.warn(
+      "perAgentBudget is 0 — runners will skip this request. Raise SOMNIA_AGENTS_PRICE_PER_AGENT_WEI."
+    );
+  }
 
   // Predict the requestId via static call (counter not yet incremented), then
   // send the real tx. We still cross-check against the RequestCreated event.
@@ -190,8 +231,6 @@ async function dispatchRequest(
         callbackAddress,
         callbackSelector,
         payload,
-        subSize,
-        deadline,
         { value: deposit }
       )
     );
@@ -208,8 +247,6 @@ async function dispatchRequest(
       callbackAddress,
       callbackSelector,
       payload,
-      subSize,
-      deadline,
       { value: deposit }
     );
     const rc = await tx.wait();
@@ -270,13 +307,16 @@ async function pollForConsensus(
   resultAbiType: string
 ): Promise<{ output: string; status: string; receiptId: string | null }> {
   const deadline = Date.now() + config.somniaAgents.requestTimeoutMs;
+  let lastPollError: string | null = null;
 
   while (Date.now() < deadline) {
     let req: any;
     try {
       req = await requester.getRequest(requestId);
+      lastPollError = null;
     } catch (err) {
-      log.debug("getRequest poll failed — retrying", { error: errMsg(err) });
+      lastPollError = errMsg(err);
+      log.debug("getRequest poll failed — retrying", { error: lastPollError });
       await sleep(config.somniaAgents.pollIntervalMs);
       continue;
     }
@@ -289,17 +329,27 @@ async function pollForConsensus(
       });
       return { output: decoded.output, status: "Success", receiptId: decoded.receiptId };
     }
-    if (status === ResponseStatus.Failed || status === ResponseStatus.TimedOut) {
+    if (status === ResponseStatus.Failed) {
       throw new SomniaAgentsUnavailable(
-        `Somnia agent request ${requestId} ended ${statusName(status)}`
+        `Somnia agent request ${requestId} ended Failed ` +
+          `(${Number(req.failureCount ?? 0)} validator failure(s)) — falling back`
+      );
+    }
+    if (status === ResponseStatus.TimedOut) {
+      throw new SomniaAgentsUnavailable(
+        `Somnia agent request ${requestId} timed out on-chain — likely no runners ` +
+          `accepted it (raise SOMNIA_AGENTS_PRICE_PER_AGENT_WEI above the agent's per-agent price)`
       );
     }
 
     await sleep(config.somniaAgents.pollIntervalMs);
   }
 
+  const rpcNote = lastPollError ? ` Last RPC error: ${lastPollError}.` : "";
   throw new SomniaAgentsUnavailable(
-    `Somnia agent request ${requestId} timed out after ${config.somniaAgents.requestTimeoutMs}ms`
+    `Somnia agent request ${requestId} did not reach consensus within ` +
+      `${config.somniaAgents.requestTimeoutMs}ms (still Pending — raise SOMNIA_AGENTS_TIMEOUT_MS ` +
+      `or the per-agent reward).${rpcNote} Falling back`
   );
 }
 
