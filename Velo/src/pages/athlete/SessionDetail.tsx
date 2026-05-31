@@ -1,33 +1,30 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { type Hex } from "viem";
 import { Link } from "wouter";
 import { TopBar } from "@/components/TopBar";
-import { AthleteMonogram } from "@/components/AthleteMonogram";
 import {
   useJob,
   useFormReceipt,
   usePrescriptionReceipt,
-  orchestratorAddress,
-  useCancelExpired,
 } from "@/hooks/useVeloContracts";
-import { useAthleteDirectory } from "@/lib/domain/athletes";
 import { shortAddr, timeUntil, formatStt } from "@/lib/format";
-import {
-  fetchIndexedReceipts,
-  type IndexedReceipts,
-} from "@/lib/web3/indexer";
-import { veloOrchestratorAbi } from "@/lib/web3/abis";
-import { ShieldCheck, Clock, AlertTriangle, ArrowLeft } from "lucide-react";
+import { fetchIndexedReceipts, type IndexedReceipts } from "@/lib/web3/indexer";
+import { ShieldCheck, Clock, ArrowLeft } from "lucide-react";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { ReceiptStage, Stage, Row, decodeReceipt } from "@/components/session/ReceiptStage";
 
-export default function JobDetail({ jobId }: { jobId: Hex }) {
-  // Live-poll on-chain state until the session reaches a terminal stage so the
-  // timeline advances without a manual reload while the agents are working.
-  // `useJob` stops polling on its own once the job is Completed/Cancelled; the
-  // receipt + indexer queries are told to stop on cancellation (no receipt will
-  // ever arrive) and stop naturally once their data lands for completed jobs.
+/**
+ * Read-only mirror of the coach's Session Detail timeline, scoped to the
+ * athlete viewing their own permanent record. Reuses the same on-chain receipt
+ * rendering + signature-verification machinery; intentionally omits any coach
+ * actions (cancel / refund) since the athlete only reads their record.
+ */
+export default function SessionDetail({ jobId }: { jobId: Hex }) {
+  // Live-poll on-chain state until the session reaches a terminal stage so an
+  // in-flight session advances without a manual reload. `useJob` stops on its
+  // own once Completed/Cancelled; the receipt + indexer queries stop on
+  // cancellation (no receipt will arrive) and naturally once their data lands.
   const { data: job, isLoading: jobLoading } = useJob(jobId, { poll: true });
   const isCancelled = job?.status === "Cancelled";
   const isTerminal = isCancelled || job?.status === "Completed";
@@ -35,17 +32,12 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
   const { data: rxReceiptRaw } = usePrescriptionReceipt(jobId, {
     poll: !isCancelled,
   });
-  const { writeContract: cancel } = useCancelExpired();
-  const { resolve, ensure } = useAthleteDirectory();
 
   const formReceipt = useMemo(() => decodeReceipt(formReceiptRaw), [formReceiptRaw]);
   const rxReceipt = useMemo(() => decodeReceipt(rxReceiptRaw), [rxReceiptRaw]);
 
-  // Indexer-supplied {receipt, signature} — gates the "Verified" badge so we
-  // can prove the agent signed each receipt without trusting the orchestrator.
-  // Poll until the prescription provenance is hydrated, then stop. Bail out on
-  // cancellation, a disabled indexer, or a terminal job whose indexer errors,
-  // so finished pages don't poll forever.
+  // Indexer-supplied {receipt, signature} — gates the "Verified" badge so the
+  // athlete can prove each agent signed its receipt, exactly as the coach can.
   const indexerQ = useQuery({
     queryKey: ["velo:indexer:receipts", jobId],
     enabled: !!jobId && (!!formReceipt || !!rxReceipt),
@@ -64,11 +56,6 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
   const indexed: IndexedReceipts | null =
     indexerQ.data?.status === "ready" ? indexerQ.data.data : null;
 
-  useEffect(() => {
-    if (job?.athlete) ensure(job.athlete);
-  }, [job?.athlete, ensure]);
-  const athlete = job ? resolve(job.athlete) : null;
-
   if (jobLoading) {
     return (
       <div className="min-h-[100dvh] flex flex-col bg-background">
@@ -85,8 +72,8 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
         <TopBar />
         <div className="flex-1 p-12 flex flex-col items-center justify-center text-center">
           <h1 className="font-serif-display text-3xl text-chalk mb-4">Session Not Found</h1>
-          <Link href="/coach" className="text-amber hover:underline">
-            Return to sessions
+          <Link href="/athlete" className="text-amber hover:underline">
+            Return to your records
           </Link>
         </div>
       </div>
@@ -94,7 +81,6 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
   }
 
   const isExpired = Date.now() / 1000 > Number(job.deadline);
-  const canCancel = isExpired && (job.status === "Requested" || job.status === "FormSubmitted");
 
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background">
@@ -102,27 +88,22 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
 
       <main className="flex-1 max-w-4xl w-full mx-auto p-6 md:p-12 pb-24">
         <Link
-          href="/coach"
+          href="/athlete"
           className="inline-flex items-center gap-2 text-muted-foreground hover:text-chalk transition-colors text-sm font-medium mb-8"
         >
-          <ArrowLeft className="w-4 h-4" /> Back to sessions
+          <ArrowLeft className="w-4 h-4" /> Back to your records
         </Link>
 
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 mb-12">
-          <div className="flex items-center gap-5 min-w-0">
-            {athlete && <AthleteMonogram name={athlete.name} size="xl" />}
-            <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-widest text-amber mb-1">
-                Session for
-              </div>
-              <h1 className="font-serif-display text-4xl md:text-5xl text-chalk tracking-tight leading-tight">
-                {athlete?.name ?? "Athlete"}
-              </h1>
-              {job && (
-                <div className="font-mono text-[10px] text-muted-foreground mt-1 truncate">
-                  {shortAddr(job.athlete, 6, 4)}
-                </div>
-              )}
+          <div className="min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-amber mb-1">
+              Session report
+            </div>
+            <h1 className="font-serif-display text-4xl md:text-5xl text-chalk tracking-tight leading-tight">
+              Your training record
+            </h1>
+            <div className="font-mono text-[10px] text-muted-foreground mt-1 truncate">
+              Coached by {shortAddr(job.coach, 6, 4)}
             </div>
           </div>
           <div className="px-3 py-1.5 bg-card border border-border/50 rounded-sm font-mono text-[11px] text-chalk/80 shrink-0">
@@ -183,7 +164,7 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
             receipt={formReceipt}
             indexedEntry={indexed?.form ?? null}
             placeholderTitle="Awaiting Form agent"
-            placeholderHint="Form agent will submit signed receipt on-chain."
+            placeholderHint="Your coach's Form agent will submit a signed receipt on-chain."
           />
 
           {/* Stage 3 — Prescription */}
@@ -193,7 +174,7 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
             receipt={rxReceipt}
             indexedEntry={indexed?.prescription ?? null}
             placeholderTitle="Awaiting Prescriber agent"
-            placeholderHint="Prescriber agent will submit signed receipt on-chain."
+            placeholderHint="Your coach's Prescriber agent will submit a signed receipt on-chain."
           />
 
           {/* Stage 4 — Appended to SBT */}
@@ -206,19 +187,17 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
                 <Clock className="w-5 h-5 text-muted-foreground" />
               )
             }
-            title={rxReceipt ? "Appended to SBT" : "Awaiting permanent record"}
+            title={rxReceipt ? "Appended to your SBT" : "Awaiting permanent record"}
           >
             {!rxReceipt ? (
               <p className="text-sm text-muted-foreground font-light">
-                Once both receipts are submitted, the session is appended to the athlete's
-                soulbound training record.
+                Once both receipts are submitted, this session is appended to your soulbound
+                training record.
               </p>
             ) : (
               <>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Receipt is now part of{" "}
-                  <span className="text-chalk">{athlete?.name ?? "the athlete"}</span>'s
-                  permanent training record.
+                  This receipt is now part of your permanent, soulbound training record.
                 </p>
                 <div className="space-y-2 text-xs font-mono">
                   <Row label="Athlete" value={shortAddr(job.athlete)} />
@@ -229,54 +208,6 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
             )}
           </Stage>
         </div>
-
-        {canCancel && (
-          <div className="mt-16 p-6 border border-destructive/30 bg-destructive/5 rounded-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h4 className="text-destructive font-medium flex items-center gap-2 mb-1">
-                  <AlertTriangle className="w-4 h-4" /> Deadline Expired
-                </h4>
-                <p className="text-sm text-muted-foreground">
-                  Agents failed to complete the analysis in time. You can cancel and refund your fee.
-                </p>
-              </div>
-              <button
-                onClick={() =>
-                  cancel({
-                    address: orchestratorAddress()!,
-                    abi: veloOrchestratorAbi,
-                    functionName: "cancelExpired",
-                    args: [jobId],
-                  })
-                }
-                className="px-4 py-2 bg-destructive/10 text-destructive hover:bg-destructive/20 font-medium text-sm rounded-sm transition-colors whitespace-nowrap"
-              >
-                Cancel &amp; Refund
-              </button>
-            </div>
-            <div className="mt-4 pt-4 border-t border-destructive/20 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-              <div>
-                <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-1">
-                  Refund amount
-                </div>
-                <div className="font-mono text-amber text-base">{formatStt(job.fee)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-1">
-                  Returned to
-                </div>
-                <div className="font-mono text-chalk/80">{shortAddr(job.coach, 6, 6)}</div>
-              </div>
-              <div>
-                <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-1">
-                  Gas
-                </div>
-                <div className="font-mono text-chalk/80">paid by you (small)</div>
-              </div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );
