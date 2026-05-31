@@ -15,7 +15,9 @@ export const StrokePhaseSchema = z.object({
   frameIndex: z.number(),
   timestampMs: z.number(),
   angles: JointAnglesSchema,
-  wristVelocityPx: z.number().optional(),
+  // The first analyzed frame has no prior frame to diff against, so the engine
+  // emits `null` here (not absent). Accept null as well as undefined.
+  wristVelocityPx: z.number().nullish(),
 });
 
 export const TennisTelemetrySchema = z.object({
