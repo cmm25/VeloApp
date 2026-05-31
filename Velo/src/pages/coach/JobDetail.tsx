@@ -22,6 +22,7 @@ import {
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import { shortAddr, timeUntil, formatStt } from "@/lib/format";
 import { toStrokeReport, toPrescriptionPlan } from "@/lib/domain/tennis";
+import { cleanFallbackReason } from "@/lib/domain/fallback";
 import {
   verifyReceipt,
   domainFor,
@@ -674,31 +675,6 @@ function SomniaProvenancePanel({ provenance }: { provenance: AiProvenance | null
       )}
     </div>
   );
-}
-
-/**
- * The raw `fallbackReason` can carry an ethers `CALL_EXCEPTION` dump (action,
- * data="0x…", code, version) that overflows the card. Keep only the concise
- * human-readable lead, cutting at the first raw-detail marker.
- */
-function cleanFallbackReason(raw: string | undefined): string {
-  if (!raw) return "";
-  let s = raw.trim();
-  const markers = [
-    " Last RPC error",
-    " (action=",
-    " (error=",
-    " code=CALL_EXCEPTION",
-    ' data="0x',
-  ];
-  let cut = s.length;
-  for (const m of markers) {
-    const i = s.indexOf(m);
-    if (i !== -1 && i < cut) cut = i;
-  }
-  s = s.slice(0, cut).trim();
-  // Drop any dangling opener / dash left behind by the cut.
-  return s.replace(/[\s—(]+$/, "").trim();
 }
 
 // ---------- Integrity / verifier panel ----------
