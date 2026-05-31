@@ -1,0 +1,1 @@
+- [velo telemetry boundary](velo-telemetry-boundary.md) — velo-engine returns snake_case, velo-agents/Zod use camelCase; normalize + validate at the fetch boundary, never cast.
