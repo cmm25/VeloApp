@@ -61,5 +61,8 @@ temp/
 .replit
 replit.nix
 
+# ── Agent memory (local, not committed) ───────────────────────────────────────
+.agents/
+
 # ── Reference folders  ───────────────────
 /reference-files-eshaan/
