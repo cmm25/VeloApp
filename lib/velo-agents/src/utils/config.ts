@@ -61,13 +61,20 @@ export const config = {
     llmAgentId: optional("SOMNIA_LLM_AGENT_ID", ""),
     // JSON API Request agent — id 13174292974160097713 in the docs oracle example.
     jsonApiAgentId: optional("SOMNIA_JSON_API_AGENT_ID", "13174292974160097713"),
-    // Deposit sizing: deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize
+    // Deposit sizing: deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize.
+    // subcommitteeSize MUST match the platform default (3) — the basic createRequest
+    // uses that default, and the contract divides the reward pot by it.
     subcommitteeSize: optionalInt("SOMNIA_AGENTS_SUBCOMMITTEE", 3),
-    pricePerAgentWei: optional("SOMNIA_AGENTS_PRICE_PER_AGENT_WEI", "30000000000000000"), // 0.03 STT
+    // Per-agent reward. Runners skip a request whose perAgentBudget is below their
+    // fixed per-type price. LLM Inference = 0.07 STT today (JSON API is 0.03 STT).
+    // See docs.somnia.network/agents/invoking-agents/gas-fees#current-per-agent-prices
+    pricePerAgentWei: optional("SOMNIA_AGENTS_PRICE_PER_AGENT_WEI", "70000000000000000"), // 0.07 STT
     // How long the runner polls getRequest() for consensus before falling back (ms).
-    requestTimeoutMs: optionalInt("SOMNIA_AGENTS_TIMEOUT_MS", 45_000),
+    // On-chain LLM inference across a subcommittee can take well over a minute.
+    requestTimeoutMs: optionalInt("SOMNIA_AGENTS_TIMEOUT_MS", 120_000),
     pollIntervalMs: optionalInt("SOMNIA_AGENTS_POLL_MS", 2_000),
-    // On-chain request deadline buffer (seconds) passed to createRequest.
+    // Reserved for createAdvancedRequest; the basic createRequest path uses the
+    // platform's default timeout, so this is currently unused.
     deadlineBufferSec: optionalInt("SOMNIA_AGENTS_DEADLINE_SEC", 300),
     // Base URL for the public consensus receipt viewer (linked from the UI).
     receiptBaseUrl: optional(
