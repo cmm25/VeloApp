@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 import { Link, useLocation } from "wouter";
-import { useMyJobs, useCancelExpired, orchestratorAddress } from "@/hooks/useVeloContracts";
+import {
+  useMyJobs,
+  useJobsByIds,
+  useCancelExpired,
+  orchestratorAddress,
+  type Job,
+  type JobStatus,
+} from "@/hooks/useVeloContracts";
+import { useRecentJobs } from "@/lib/domain/recentJobs";
 import { TopBar } from "@/components/TopBar";
 import { AgentActivityStrip } from "@/components/AgentActivityStrip";
 import { IndexerSourceBadge } from "@/components/IndexerSourceBadge";
@@ -143,6 +151,69 @@ export default function CoachHome() {
       completed: jobs.filter((j) => j.status === "Completed").length,
     };
   }, [jobs]);
+
+  // Locally-remembered jobs (written at submit time) make a just-paid job
+  // reachable immediately, before the event-log scan in useMyJobs catches up.
+  const { recent, remove } = useRecentJobs(address);
+  const recentIds = useMemo(() => recent.map((r) => r.jobId), [recent]);
+  const { jobs: recentChainJobs } = useJobsByIds(recentIds);
+
+  // Authoritative on-chain status by jobId, from both sources (chain wins).
+  const statusById = useMemo(() => {
+    const m = new Map<string, Job>();
+    jobs.forEach((j) => m.set(j.jobId.toLowerCase(), j));
+    recentChainJobs.forEach((j) => m.set(j.jobId.toLowerCase(), j));
+    return m;
+  }, [jobs, recentChainJobs]);
+
+  // Active = in-progress sessions worth resuming. Union of on-chain in-progress
+  // jobs and locally-remembered recent jobs, de-duped by jobId.
+  type ActiveEntry = {
+    jobId: `0x${string}`;
+    athlete: `0x${string}`;
+    status: JobStatus;
+    createdAt: number; // ms
+  };
+  const activeJobs = useMemo<ActiveEntry[]>(() => {
+    const map = new Map<string, ActiveEntry>();
+    jobs.forEach((j) => {
+      if (j.status === "Requested" || j.status === "FormSubmitted") {
+        map.set(j.jobId.toLowerCase(), {
+          jobId: j.jobId,
+          athlete: j.athlete,
+          status: j.status,
+          createdAt: Number(j.createdAt) * 1000,
+        });
+      }
+    });
+    recent.forEach((r) => {
+      const key = r.jobId.toLowerCase();
+      const chain = statusById.get(key);
+      // Settled jobs are no longer "active" — they live in All sessions below.
+      if (chain && (chain.status === "Completed" || chain.status === "Cancelled")) return;
+      if (!map.has(key)) {
+        map.set(key, {
+          jobId: r.jobId,
+          athlete: chain?.athlete ?? r.athlete,
+          status: chain?.status ?? "Requested",
+          createdAt: r.createdAt,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }, [jobs, recent, statusById]);
+
+  // Prune locally-remembered jobs once they settle on-chain so the list stays
+  // lean and they fall through to the full sessions list.
+  useEffect(() => {
+    const settled = recent
+      .filter((r) => {
+        const c = statusById.get(r.jobId.toLowerCase());
+        return c && (c.status === "Completed" || c.status === "Cancelled");
+      })
+      .map((r) => r.jobId);
+    if (settled.length > 0) remove(settled);
+  }, [recent, statusById, remove]);
 
   const handleQuickCancel = async (jobId: `0x${string}`, fee: bigint) => {
     const orch = orchestratorAddress();
@@ -428,6 +499,44 @@ export default function CoachHome() {
         )}
 
         <AgentActivityStrip />
+
+        {/* Active sessions — resume in-progress work, surfaced instantly from a
+            local record so a just-submitted job is reachable before the indexer
+            catches up. */}
+        {activeJobs.length > 0 && (
+          <section className="mt-10">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+              <Activity className="w-3 h-3 text-amber" />
+              Active sessions · {activeJobs.length}
+            </h2>
+            <ul className="grid sm:grid-cols-2 gap-3">
+              {activeJobs.map((a) => {
+                const athlete = resolve(a.athlete);
+                const athleteName = athlete?.name ?? `Athlete ${a.athlete.slice(2, 6)}`;
+                return (
+                  <li key={a.jobId}>
+                    <Link
+                      href={`/coach/jobs/${a.jobId}`}
+                      className="flex items-center gap-3 px-4 py-3 bg-card/40 hover:bg-card border border-border/50 hover:border-amber/40 rounded-sm transition-colors"
+                    >
+                      <AthleteMonogram name={athleteName} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-chalk truncate font-medium">
+                          {athleteName}
+                        </div>
+                        <div className="font-mono text-[10px] text-muted-foreground truncate">
+                          {shortAddr(a.jobId, 6, 4)}
+                        </div>
+                      </div>
+                      <StatusBadge status={a.status} />
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
 
         {/* Sessions — collapsible */}
         <section className="mt-10">

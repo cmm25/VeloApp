@@ -219,6 +219,41 @@ export function useMyJobs(coach?: Address) {
   };
 }
 
+/**
+ * Read current on-chain state for an explicit list of jobIds.
+ *
+ * Unlike `useMyJobs` (which discovers ids via a lagging event-log scan), this
+ * takes ids the caller already knows — e.g. locally-remembered recent jobs — so
+ * a freshly-submitted job can show its real status immediately. Pass a stable
+ * (memoized) array to avoid needless refetches.
+ */
+export function useJobsByIds(jobIds: Hex[]) {
+  const orch = orchestratorAddress();
+  const stateQ = useReadContracts({
+    contracts: jobIds.map((jobId) => ({
+      address: orch!,
+      abi: veloOrchestratorAbi,
+      functionName: "getJob" as const,
+      args: [jobId] as const,
+    })),
+    query: { enabled: !!orch && jobIds.length > 0 },
+  });
+
+  const jobs = useMemo<Job[]>(() => {
+    if (!stateQ.data) return [];
+    const out: Job[] = [];
+    stateQ.data.forEach((res, i) => {
+      if (res.status === "success" && res.result) {
+        const j = decodeJob(jobIds[i]!, res.result);
+        if (j) out.push(j);
+      }
+    });
+    return out;
+  }, [stateQ.data, jobIds]);
+
+  return { jobs, isLoading: stateQ.isLoading, refetch: stateQ.refetch };
+}
+
 /** Read every receipt attached to an athlete's SBT. */
 export function useAthleteReceipts(athlete?: Address) {
   const sbt = sbtAddress();
