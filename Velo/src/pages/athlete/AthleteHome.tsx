@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useSignMessage } from "wagmi";
+import { useAccount, usePublicClient, useSignMessage } from "wagmi";
 import { TopBar } from "@/components/TopBar";
 import { AthleteMonogram } from "@/components/AthleteMonogram";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -10,8 +10,12 @@ import {
   useTokenUri,
   useJob,
   decodeTokenUri,
+  orchestratorAddress,
+  sbtAddress,
   type SbtReceiptRef,
 } from "@/hooks/useVeloContracts";
+import { veloOrchestratorAbi, athleteSbtAbi } from "@/lib/web3/abis";
+import { somniaTestnet } from "@/lib/web3/chain";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import {
   useTapes,
@@ -51,9 +55,20 @@ import { Link } from "wouter";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
+/** How long the receipt list keeps polling after the last relevant on-chain
+ * event before it backs off (mirrors `useJob` settling into a terminal state). */
+const RECEIPT_LIVE_WINDOW_MS = 60_000;
+
 export default function AthleteHome() {
   const { address } = useAccount();
-  const { receipts, count, tokenId, isLoading } = useAthleteReceipts(address);
+  // Auto-refresh the receipt list while a session targeting this athlete is in
+  // flight. We open a live window when the athlete's job is requested or a new
+  // receipt is appended, then back off after a quiet spell so an idle page is
+  // not polling forever.
+  const receiptsLive = useReceiptsLive(address);
+  const { receipts, count, tokenId, isLoading } = useAthleteReceipts(address, {
+    poll: receiptsLive,
+  });
   const { data: tokenUriRaw } = useTokenUri(tokenId);
   const metadata = decodeTokenUri(tokenUriRaw as string | undefined);
   const { resolve, ensure, claim } = useAthleteDirectory();
@@ -741,6 +756,62 @@ function ReceiptRow({
       )}
     </motion.div>
   );
+}
+
+/**
+ * Returns `true` while the athlete's receipt list should auto-refresh.
+ *
+ * The athlete page has no in-flight job list of its own, so we watch the
+ * on-chain events that bracket a session for this athlete — `JobRequested`
+ * (session opened) on the orchestrator and `ReceiptAppended` (receipt landed)
+ * on the SBT, both indexed by athlete. Either one opens a live window; the
+ * window closes after a quiet spell so an idle page stops polling, mirroring
+ * how `useJob` stops at a terminal state.
+ */
+function useReceiptsLive(athlete?: `0x${string}`): boolean {
+  const [live, setLive] = useState(false);
+  const orch = orchestratorAddress();
+  const sbt = sbtAddress();
+  const client = usePublicClient({ chainId: somniaTestnet.id });
+
+  useEffect(() => {
+    if (!athlete || !client) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const openWindow = () => {
+      setLive(true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setLive(false), RECEIPT_LIVE_WINDOW_MS);
+    };
+    const unsubs: Array<() => void> = [];
+    if (orch) {
+      unsubs.push(
+        client.watchContractEvent({
+          address: orch,
+          abi: veloOrchestratorAbi,
+          eventName: "JobRequested",
+          args: { athlete } as never,
+          onLogs: () => openWindow(),
+        }),
+      );
+    }
+    if (sbt) {
+      unsubs.push(
+        client.watchContractEvent({
+          address: sbt,
+          abi: athleteSbtAbi,
+          eventName: "ReceiptAppended",
+          args: { athlete } as never,
+          onLogs: () => openWindow(),
+        }),
+      );
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubs.forEach((u) => u());
+    };
+  }, [athlete, orch, sbt, client]);
+
+  return live;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
