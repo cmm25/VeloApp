@@ -40,7 +40,17 @@ export type TennisTelemetry = z.infer<typeof TennisTelemetrySchema>;
 // ── Form Analysis Report (output of FormAgent AI) ────────────────────────────
 
 export const FormIssueSchema = z.object({
-  area: z.enum(["shoulder", "elbow", "wrist", "hip", "knee", "footwork", "balance", "timing"]),
+  area: z.enum([
+    "shoulder",
+    "elbow",
+    "wrist",
+    "hip",
+    "knee",
+    "footwork",
+    "balance",
+    "timing",
+    "symmetry",
+  ]),
   severity: z.enum(["critical", "moderate", "minor"]),
   phase: z.enum(["preparation", "contact", "follow_through", "overall"]),
   observation: z.string().max(300),

@@ -44,7 +44,7 @@ Return a JSON object matching this schema exactly:
   "overallScore": <number 0-10>,
   "issues": [
     {
-      "area": "shoulder" | "elbow" | "wrist" | "hip" | "knee" | "footwork" | "balance" | "timing",
+      "area": "shoulder" | "elbow" | "wrist" | "hip" | "knee" | "footwork" | "balance" | "timing" | "symmetry",
       "severity": "critical" | "moderate" | "minor",
       "phase": "preparation" | "contact" | "follow_through" | "overall",
       "observation": "<what is wrong, max 300 chars>",
