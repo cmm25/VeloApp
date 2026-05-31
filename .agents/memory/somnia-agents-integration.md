@@ -42,7 +42,26 @@ chainId 50312, currency STT. Mainnet platform `0x5E5205CF39E766118C01636bED000A5
 chainId 5031. The general testnet RPC `https://dream-rpc.somnia.network` and the
 agents-specific `https://api.infra.testnet.somnia.network` both serve chain 50312.
 
+## The EOA read-back race (biggest silent-fallback cause)
+The platform **deletes the Request struct from storage on consensus** (gas reclaim), so
+after finalization `getRequest(id)` reverts custom error `RequestNotFound(uint256)`
+(selector `0x4ec726c7`, arg = the requestId). The consensus *result bytes* are delivered
+ONLY to the requester's on-chain `handleResponse` callback; `RequestFinalized(id,status)`
+carries status, not the result. An off-chain EOA has no callback, so polling for overall
+`status==Success` essentially never wins — by the time we poll, it's deleted → always Groq.
+**Fix (Tier 1, code-only):** poll briskly (≤1s) and accept the FIRST individual validator
+response in `responses[]` with per-response `status==Success` + decodable `result`, even
+while the overall request is still `Pending` — Qwen3 is deterministic (seed 0) so one
+response == consensus. Use `hasRequest(uint256)` to tell "still pending / transient RPC"
+(keep polling) apart from "finalized & removed" (terminal → clean fallback).
+**Fix (Tier 2, race-free):** a relay contract that IS the callback, stores the result, and
+emits it; the runner reads that. Needed only if Tier 1's window proves too tight live.
+**Why:** verified against docs `invoking-agents/from-solidity` (interface ships BOTH
+`getRequest` and `hasRequest` — the tell that requests stop existing) + selector brute-force.
+
 ## How to apply
 Cannot test end-to-end without a funded wallet + real `SOMNIA_LLM_AGENT_ID` on live
 testnet. To verify the native path actually ran (not fell back), check provenance:
 `provenance.path === "native"` with a `somnia.requestId`, and that the receipt URL resolves.
+The runner logs `Somnia agent result captured ✓` on success; the clean terminal fallback
+message names whether the request was readable-but-empty vs. finalized-and-removed.
