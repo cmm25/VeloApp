@@ -1,52 +1,52 @@
 import { ethers } from "ethers";
 import { config } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
-import { getProvider } from "../chain/contracts.js";
 
 const log = makeLogger("somnia-agents");
 
 /**
- * Somnia native Agentic L1 client.
+ * Somnia native Agentic L1 client (relay path).
  *
- * Invokes Somnia's native agents through the `SomniaAgents` platform contract
- * (IAgentRequester). Two agent types are supported:
- *   - LLM Inference agent  → on-chain Qwen3 inference (deterministic, seed=0)
- *   - JSON API Request agent → fetch + JSON-path extract from a public API
+ * Invokes Somnia's native agents through the `VeloAgentRelay` contract, which in
+ * turn drives the `SomniaAgents` platform (IAgentRequester).
  *
- * Because the Velo agent runner is an off-chain EOA (not a smart contract that
- * can receive the platform callback), we drive the request synchronously:
- *   1. `createRequest()` (the basic 4-arg form — uses the platform's default
- *      subcommittee size of 3) with a correctly sized deposit:
+ * Why a relay is required: the platform delivers an agent's consensus result
+ * ONLY to the requester's on-chain `handleResponse` callback, then deletes the
+ * request and discards the result (verified on-chain — the finalize tx emits
+ * only `RequestFinalized(id,status)` + `SubcommitteePaid(...)`, never the result
+ * bytes). An off-chain EOA has no callback, so its result is always lost and the
+ * spent STT is wasted. The relay IS the callback: it captures the result and
+ * re-emits it as a permanent `ResultReady` log we can read back.
+ *
+ * Flow (per request):
+ *   1. `relay.request(agentId, payload)` payable — forwards a correctly sized
+ *      deposit to `platform.createRequest` with the relay as the callback:
  *        deposit = getRequestDeposit() (operations-reserve floor)
  *                + pricePerAgent × subcommitteeSize (agent reward pot)
- *      The reward pot MUST clear the runner's per-agent price for the agent
- *      type (LLM Inference = 0.07 STT today) or runners skip the request and
- *      it times out. See docs.somnia.network/agents/invoking-agents/gas-fees.
- *   2. recover the requestId (static-call prediction + RequestCreated event)
- *   3. poll `getRequest(requestId)` until the request reaches consensus
- *      (Success / Failed / TimedOut) or our local timeout elapses
- *   4. decode the consensus result from the validator responses
+ *      The reward pot MUST clear the runner's per-agent price for the agent type
+ *      (LLM Inference = 0.07 STT today) or runners skip the request and it
+ *      times out. See docs.somnia.network/agents/invoking-agents/gas-fees.
+ *   2. recover the requestId from the relay's `RelayRequestCreated` event.
+ *   3. wait for the relay's `ResultReady(requestId, status, result)` event
+ *      (bounded by our local timeout) — permanent and race-free, unlike polling
+ *      the soon-to-be-deleted Request struct.
+ *   4. decode the consensus result bytes.
  *
- * Every result carries the on-chain requestId + receipt reference so the
- * provenance is auditable and linkable on the Somnia agent explorer.
+ * Every result carries the on-chain requestId + receipt URL so the provenance is
+ * auditable and linkable on the Somnia agent explorer. Any timeout / failure /
+ * unavailability throws `SomniaAgentsUnavailable` so the caller falls back to
+ * the off-chain Groq path cleanly.
  */
 
 // ── ABIs ───────────────────────────────────────────────────────────────────
 
-// IAgentRequester — the SomniaAgents platform contract surface we need.
-// Signatures verified against docs.somnia.network/agents/invoking-agents/from-solidity.
-// NB: the basic createRequest takes ONLY 4 args (agentId, callback, selector,
-// payload) and uses the platform's default subcommittee size — subcommitteeSize,
-// threshold, consensusType and timeout belong to createAdvancedRequest.
-const AGENT_REQUESTER_ABI = [
-  "function createRequest(uint256 agentId, address callbackAddress, bytes4 callbackSelector, bytes payload) payable returns (uint256 requestId)",
+// VeloAgentRelay — our on-chain relay (see Hardhat/contracts/VeloAgentRelay.sol).
+const RELAY_ABI = [
+  "function request(uint256 agentId, bytes payload) payable returns (uint256 requestId)",
   "function getRequestDeposit() view returns (uint256)",
-  "function getRequest(uint256 requestId) view returns (tuple(uint256 id, address requester, address callbackAddress, bytes4 callbackSelector, address[] subcommittee, tuple(address validator, bytes result, uint8 status, uint256 receipt, uint256 timestamp, uint256 executionCost)[] responses, uint256 responseCount, uint256 failureCount, uint256 threshold, uint256 createdAt, uint256 deadline, uint8 status, uint8 consensusType, uint256 remainingBudget, uint256 perAgentBudget))",
-  // hasRequest lets us tell "not visible yet / transient RPC" apart from
-  // "finalized & removed from storage": after consensus the platform deletes the
-  // Request struct (gas reclaim), so getRequest then reverts RequestNotFound.
-  "function hasRequest(uint256 requestId) view returns (bool)",
-  "event RequestCreated(uint256 indexed requestId, uint256 indexed agentId, uint256 perAgentBudget, bytes payload, address[] subcommittee)",
+  "function getResult(uint256 requestId) view returns (bool ready, uint8 status)",
+  "event RelayRequestCreated(uint256 indexed requestId, uint256 indexed agentId, address indexed operator)",
+  "event ResultReady(uint256 indexed requestId, uint8 status, bytes result)",
 ] as const;
 
 // LLM Inference agent — `inferString(prompt, system, chainOfThought, allowedValues)`
@@ -64,7 +64,7 @@ const JSON_API_AGENT_ABI = [
   "function request(string url, string jsonPath) returns (string)",
 ] as const;
 
-// Mirrors IAgentRequester.ResponseStatus
+// Mirrors ISomniaAgents.ResponseStatus
 enum ResponseStatus {
   None = 0,
   Pending = 1,
@@ -73,11 +73,10 @@ enum ResponseStatus {
   TimedOut = 4,
 }
 
-const ZERO_SELECTOR = "0x00000000";
-
-// The basic createRequest uses the platform's default subcommittee size. The
-// reward pot is divided by THIS value on-chain, so we size the reward against it
-// (not a possibly-misconfigured env) to avoid underfunding -> runner skip -> timeout.
+// The basic createRequest (which the relay uses) takes the platform's default
+// subcommittee size. The reward pot is divided by THIS value on-chain, so we
+// size the reward against it (not a possibly-misconfigured env) to avoid
+// underfunding -> runner skip -> timeout.
 const PLATFORM_DEFAULT_SUBCOMMITTEE = 3n;
 
 export interface SomniaAgentReceipt {
@@ -85,7 +84,7 @@ export interface SomniaAgentReceipt {
   agentId: string;
   txHash: string;
   consensusStatus: string; // "Success" | "Failed" | "TimedOut"
-  receipt: string | null; // validator receipt id (if any)
+  receipt: string | null; // validator receipt id (not exposed via the relay event)
   receiptUrl: string;
 }
 
@@ -101,11 +100,16 @@ export class SomniaAgentsUnavailable extends Error {
   }
 }
 
-/** True when the native path is configured well enough to attempt. */
+/**
+ * True when the native path is configured well enough to attempt. The relay
+ * address is REQUIRED: without it the platform result is unreadable, so we must
+ * skip the (wasteful) native request entirely and go straight to Groq.
+ */
 export function nativeAgentsConfigured(): boolean {
   return (
     config.somniaAgents.enabled &&
     !!config.somniaAgents.contract &&
+    !!config.somniaAgents.relayAddress &&
     !!config.somniaAgents.llmAgentId &&
     config.somniaAgents.llmAgentId !== "0"
   );
@@ -122,12 +126,17 @@ function buildReceiptUrl(requestId: string): string {
   return `${base}/receipts/${requestId}`;
 }
 
-function getRequesterContract(signer: ethers.Wallet) {
-  return new ethers.Contract(config.somniaAgents.contract, AGENT_REQUESTER_ABI, signer);
+function getRelayContract(signer: ethers.Wallet) {
+  if (!config.somniaAgents.relayAddress) {
+    throw new SomniaAgentsUnavailable(
+      "SOMNIA_AGENT_RELAY_ADDRESS not set — the native on-chain result requires the deployed VeloAgentRelay"
+    );
+  }
+  return new ethers.Contract(config.somniaAgents.relayAddress, [...RELAY_ABI], signer);
 }
 
 /**
- * Run an LLM Inference request through Somnia's native agent.
+ * Run an LLM Inference request through Somnia's native agent (via the relay).
  * Returns the raw consensus string plus the auditable receipt reference.
  * Throws `SomniaAgentsUnavailable` on any timeout / unavailability so the
  * caller can fall back to the off-chain path.
@@ -139,7 +148,7 @@ export async function runLlmInference(
 ): Promise<SomniaAgentResult> {
   if (!nativeAgentsConfigured()) {
     throw new SomniaAgentsUnavailable(
-      "Somnia native agents not configured (set SOMNIA_AGENTS_ENABLED and SOMNIA_LLM_AGENT_ID)"
+      "Somnia native agents not configured (set SOMNIA_AGENTS_ENABLED, SOMNIA_AGENT_RELAY_ADDRESS and SOMNIA_LLM_AGENT_ID)"
     );
   }
   // inferString(prompt, system, chainOfThought, allowedValues): user prompt is
@@ -149,9 +158,7 @@ export async function runLlmInference(
     "inferString",
     [userPrompt, systemPrompt, false, []]
   );
-  // LLM Inference is deterministic (Qwen3, seed 0), so a single validator
-  // response equals consensus — safe to accept early and beat request deletion.
-  return dispatchRequest(config.somniaAgents.llmAgentId, payload, signer, "string", true);
+  return dispatchRequest(config.somniaAgents.llmAgentId, payload, signer, "string");
 }
 
 /**
@@ -163,16 +170,16 @@ export async function runJsonApiRequest(
   jsonPath: string,
   signer: ethers.Wallet
 ): Promise<SomniaAgentResult> {
-  if (!config.somniaAgents.enabled || !config.somniaAgents.jsonApiAgentId) {
-    throw new SomniaAgentsUnavailable("Somnia JSON API agent not configured");
+  if (!config.somniaAgents.enabled || !config.somniaAgents.relayAddress || !config.somniaAgents.jsonApiAgentId) {
+    throw new SomniaAgentsUnavailable(
+      "Somnia JSON API agent not configured (needs SOMNIA_AGENT_RELAY_ADDRESS + SOMNIA_JSON_API_AGENT_ID)"
+    );
   }
   const payload = new ethers.Interface([...JSON_API_AGENT_ABI]).encodeFunctionData(
     "request",
     [url, jsonPath]
   );
-  // JSON API responses are not guaranteed identical across validators, so do NOT
-  // accept a single early response here — require the platform's overall consensus.
-  return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string", false);
+  return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string");
 }
 
 // ── Core request lifecycle ──────────────────────────────────────────────────
@@ -181,10 +188,9 @@ async function dispatchRequest(
   agentId: string,
   payload: string,
   signer: ethers.Wallet,
-  resultAbiType: string,
-  allowEarlyResponse: boolean
+  resultAbiType: string
 ): Promise<SomniaAgentResult> {
-  const requester = getRequesterContract(signer);
+  const relay = getRelayContract(signer);
   const pricePerAgent = BigInt(config.somniaAgents.pricePerAgentWei);
   // Size the reward against the platform default (what the contract actually
   // divides by), not the env value — a misconfigured env must not underfund.
@@ -202,22 +208,19 @@ async function dispatchRequest(
   //                                            price or runners skip the request)
   let reserve: bigint;
   try {
-    reserve = BigInt(await requester.getRequestDeposit());
+    reserve = BigInt(await relay.getRequestDeposit());
   } catch (err) {
     throw new SomniaAgentsUnavailable(
-      `getRequestDeposit() failed — platform unreachable: ${errMsg(err)}`
+      `relay.getRequestDeposit() failed — relay/platform unreachable: ${errMsg(err)}`
     );
   }
   const reward = pricePerAgent * subSize;
   const deposit = reserve + reward;
   const perAgentBudget = subSize > 0n ? reward / subSize : 0n;
 
-  // EOA requester: no contract callback, so pass zero address/selector and poll.
-  const callbackAddress = ethers.ZeroAddress;
-  const callbackSelector = ZERO_SELECTOR;
-
-  log.info("Creating Somnia agent request", {
+  log.info("Creating Somnia agent request via relay", {
     agentId,
+    relay: config.somniaAgents.relayAddress,
     subSize: subSize.toString(),
     reserveWei: reserve.toString(),
     rewardWei: reward.toString(),
@@ -230,57 +233,32 @@ async function dispatchRequest(
     );
   }
 
-  // Predict the requestId via static call (counter not yet incremented), then
-  // send the real tx. We still cross-check against the RequestCreated event.
-  let predictedId: bigint | null = null;
-  try {
-    predictedId = BigInt(
-      await requester.createRequest.staticCall(
-        BigInt(agentId),
-        callbackAddress,
-        callbackSelector,
-        payload,
-        { value: deposit }
-      )
-    );
-  } catch (err) {
-    // Static call can fail on some nodes for payable returns; not fatal.
-    log.debug("createRequest staticCall prediction failed", { error: errMsg(err) });
-  }
-
   let txHash: string;
   let requestId: bigint;
+  let fromBlock: number;
   try {
-    const tx = await requester.createRequest(
-      BigInt(agentId),
-      callbackAddress,
-      callbackSelector,
-      payload,
-      { value: deposit }
-    );
+    const tx = await relay.request(BigInt(agentId), payload, { value: deposit });
     const rc = await tx.wait();
     txHash = rc.hash;
+    fromBlock = rc.blockNumber;
 
-    const eventId = extractRequestIdFromLogs(requester, rc);
-    requestId = eventId ?? predictedId ?? -1n;
-    if (requestId < 0n) {
-      throw new SomniaAgentsUnavailable("Could not determine requestId from tx");
+    const eventId = extractRelayRequestId(relay, rc);
+    if (eventId === null) {
+      throw new SomniaAgentsUnavailable("Could not determine requestId from relay tx");
     }
-    log.info("Somnia agent request created", {
+    requestId = eventId;
+    log.info("Somnia agent request created via relay", {
       requestId: requestId.toString(),
       txHash,
+      block: fromBlock,
     });
   } catch (err) {
-    throw new SomniaAgentsUnavailable(`createRequest failed: ${errMsg(err)}`);
+    if (err instanceof SomniaAgentsUnavailable) throw err;
+    throw new SomniaAgentsUnavailable(`relay.request failed: ${errMsg(err)}`);
   }
 
-  // Poll getRequest() until consensus or local timeout.
-  const result = await pollForConsensus(
-    requester,
-    requestId,
-    resultAbiType,
-    allowEarlyResponse
-  );
+  // Wait for the relay's ResultReady event (permanent log, race-free).
+  const result = await waitForResultReady(relay, requestId, resultAbiType, fromBlock);
 
   return {
     output: result.output,
@@ -289,13 +267,13 @@ async function dispatchRequest(
       agentId,
       txHash,
       consensusStatus: result.status,
-      receipt: result.receiptId,
+      receipt: null,
       receiptUrl: buildReceiptUrl(requestId.toString()),
     },
   };
 }
 
-function extractRequestIdFromLogs(
+function extractRelayRequestId(
   contract: ethers.Contract,
   rc: ethers.TransactionReceipt
 ): bigint | null {
@@ -305,7 +283,7 @@ function extractRequestIdFromLogs(
         topics: lg.topics as string[],
         data: lg.data,
       });
-      if (parsed?.name === "RequestCreated") {
+      if (parsed?.name === "RelayRequestCreated") {
         return BigInt(parsed.args.requestId ?? parsed.args[0]);
       }
     } catch {
@@ -315,140 +293,88 @@ function extractRequestIdFromLogs(
   return null;
 }
 
-async function pollForConsensus(
-  requester: ethers.Contract,
+/**
+ * Wait for the relay to emit `ResultReady(requestId, status, result)`. The event
+ * is permanent, so unlike polling the soon-deleted Request struct this cannot
+ * miss the result. Bounded by the local timeout, after which we fall back.
+ */
+async function waitForResultReady(
+  relay: ethers.Contract,
   requestId: bigint,
   resultAbiType: string,
-  allowEarlyResponse: boolean
-): Promise<{ output: string; status: string; receiptId: string | null }> {
+  fromBlock: number
+): Promise<{ output: string; status: string }> {
   const deadline = Date.now() + config.somniaAgents.requestTimeoutMs;
+  const filter = relay.filters.ResultReady(requestId);
+  const provider = relay.runner?.provider ?? null;
+  let from = fromBlock;
   let lastPollError: string | null = null;
-  let sawRequestAlive = false;
 
   while (Date.now() < deadline) {
-    let req: any;
+    let logs: ethers.Log[] = [];
     try {
-      req = await requester.getRequest(requestId);
+      // Scan only [from..latest] each poll (not the whole chain) to keep RPC
+      // load down. Re-scan the boundary block next iteration (from = latest, not
+      // latest+1) so a result landing exactly on it is never missed. The
+      // ResultReady event is emitted once and is permanent, so this cannot race.
+      let to: number | undefined;
+      if (provider) {
+        to = await provider.getBlockNumber();
+        if (to < from) to = from;
+      }
+      logs = (await relay.queryFilter(filter, from, to)) as ethers.Log[];
       lastPollError = null;
-      sawRequestAlive = true;
+      if (to !== undefined) from = to;
     } catch (err) {
       lastPollError = errMsg(err);
-      // getRequest reverted. Distinguish a transient RPC blip from the request
-      // having been finalized + removed from storage (the platform deletes the
-      // Request struct on consensus, after which getRequest reverts forever).
-      const present = await requestStillExists(requester, requestId);
-      if (present === false) {
-        throw new SomniaAgentsUnavailable(
-          `Somnia agent request ${requestId} was finalized and removed before its ` +
-            `result could be read (the platform deletes requests on consensus, and an ` +
-            `EOA requester has no callback to receive it) — falling back`
-        );
-      }
-      // present === true (still pending) or null (hasRequest also failed): treat
-      // as transient and keep polling.
-      log.debug("getRequest poll failed — retrying", { error: lastPollError });
+      log.debug("queryFilter ResultReady failed — retrying", { error: lastPollError });
       await sleep(config.somniaAgents.pollIntervalMs);
       continue;
     }
 
-    const status = Number(req.status);
-    const captured = tryDecodeResponse(req, resultAbiType);
+    if (logs.length > 0) {
+      const ev = logs[logs.length - 1] as ethers.EventLog;
+      const status = Number(ev.args.status);
+      const resultBytes: string = ev.args.result;
 
-    // Overall consensus already reached: take the result and we're done.
-    if (status === ResponseStatus.Success) {
-      if (captured) {
-        log.info("Somnia agent consensus reached ✓", {
-          requestId: requestId.toString(),
-        });
-        return { output: captured.output, status: "Success", receiptId: captured.receiptId };
+      if (status !== ResponseStatus.Success) {
+        throw new SomniaAgentsUnavailable(
+          `Somnia agent request ${requestId} finalized with status ${statusName(status)} ` +
+            `(likely no runners accepted it or validators failed) — falling back`
+        );
       }
-      throw new SomniaAgentsUnavailable(
-        `Somnia agent request ${requestId} reached consensus but no decodable result ` +
-          `was present — falling back`
-      );
-    }
-    if (status === ResponseStatus.Failed) {
-      throw new SomniaAgentsUnavailable(
-        `Somnia agent request ${requestId} ended Failed ` +
-          `(${Number(req.failureCount ?? 0)} validator failure(s)) — falling back`
-      );
-    }
-    if (status === ResponseStatus.TimedOut) {
-      throw new SomniaAgentsUnavailable(
-        `Somnia agent request ${requestId} timed out on-chain — likely no runners ` +
-          `accepted it (raise SOMNIA_AGENTS_PRICE_PER_AGENT_WEI above the agent's per-agent price)`
-      );
-    }
-
-    // Still Pending. For DETERMINISTIC agents (LLM inference), accept the first
-    // successful validator response now: it equals the eventual consensus value
-    // and grabbing it early wins the race against the post-consensus deletion of
-    // the Request struct. For non-deterministic agents we must wait for overall
-    // consensus above, since per-validator responses may differ.
-    if (allowEarlyResponse && captured) {
-      log.info("Somnia agent result captured early (deterministic agent) ✓", {
+      if (!resultBytes || resultBytes === "0x") {
+        throw new SomniaAgentsUnavailable(
+          `Somnia agent request ${requestId} finalized Success but the relay captured an ` +
+            `empty result — falling back`
+        );
+      }
+      let output: string;
+      try {
+        const [decoded] = ethers.AbiCoder.defaultAbiCoder().decode([resultAbiType], resultBytes);
+        output = String(decoded);
+      } catch (err) {
+        throw new SomniaAgentsUnavailable(
+          `Somnia agent request ${requestId} result could not be decoded as ${resultAbiType}: ` +
+            `${errMsg(err)} — falling back`
+        );
+      }
+      log.info("Somnia agent consensus result captured ✓", {
         requestId: requestId.toString(),
-        overallStatus: statusName(status),
       });
-      return { output: captured.output, status: "Success", receiptId: captured.receiptId };
+      return { output, status: "Success" };
     }
 
     await sleep(config.somniaAgents.pollIntervalMs);
   }
 
   const rpcNote = lastPollError ? ` Last RPC error: ${lastPollError}.` : "";
-  const aliveNote = sawRequestAlive
-    ? " (request was readable but no validator response landed in our polling window)"
-    : "";
   throw new SomniaAgentsUnavailable(
-    `Somnia agent request ${requestId} did not reach consensus within ` +
-      `${config.somniaAgents.requestTimeoutMs}ms${aliveNote} — raise SOMNIA_AGENTS_TIMEOUT_MS ` +
-      `or lower SOMNIA_AGENTS_POLL_MS.${rpcNote} Falling back`
+    `Somnia agent request ${requestId} produced no ResultReady event within ` +
+      `${config.somniaAgents.requestTimeoutMs}ms — raise SOMNIA_AGENTS_TIMEOUT_MS, or the ` +
+      `request may have been underfunded (raise SOMNIA_AGENTS_PRICE_PER_AGENT_WEI).${rpcNote} ` +
+      `Falling back`
   );
-}
-
-/**
- * Best-effort check whether the platform still holds the request in storage.
- * Returns true/false from `hasRequest`, or null if that call itself fails (so
- * the caller can treat the situation as transient rather than terminal).
- */
-async function requestStillExists(
-  requester: ethers.Contract,
-  requestId: bigint
-): Promise<boolean | null> {
-  try {
-    return Boolean(await requester.hasRequest(requestId));
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Scan a request's validator responses for the first decodable successful
- * result. Returns null when none is present yet (so polling can continue).
- */
-function tryDecodeResponse(
-  req: any,
-  resultAbiType: string
-): { output: string; receiptId: string | null } | null {
-  const responses = req.responses ?? [];
-  for (const r of responses) {
-    if (Number(r.status) === ResponseStatus.Success && r.result && r.result !== "0x") {
-      try {
-        const [decoded] = ethers.AbiCoder.defaultAbiCoder().decode(
-          [resultAbiType],
-          r.result
-        );
-        const receiptId = r.receipt ? BigInt(r.receipt).toString() : null;
-        return { output: String(decoded), receiptId };
-      } catch (err) {
-        log.debug("Failed to decode a response result — trying next", {
-          error: errMsg(err),
-        });
-      }
-    }
-  }
-  return null;
 }
 
 function sleep(ms: number): Promise<void> {
