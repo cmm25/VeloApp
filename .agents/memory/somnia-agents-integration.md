@@ -49,15 +49,22 @@ after finalization `getRequest(id)` reverts custom error `RequestNotFound(uint25
 ONLY to the requester's on-chain `handleResponse` callback; `RequestFinalized(id,status)`
 carries status, not the result. An off-chain EOA has no callback, so polling for overall
 `status==Success` essentially never wins — by the time we poll, it's deleted → always Groq.
-**Fix (Tier 1, code-only):** poll briskly (≤1s) and accept the FIRST individual validator
-response in `responses[]` with per-response `status==Success` + decodable `result`, even
-while the overall request is still `Pending` — Qwen3 is deterministic (seed 0) so one
-response == consensus. Use `hasRequest(uint256)` to tell "still pending / transient RPC"
-(keep polling) apart from "finalized & removed" (terminal → clean fallback).
-**Fix (Tier 2, race-free):** a relay contract that IS the callback, stores the result, and
-emits it; the runner reads that. Needed only if Tier 1's window proves too tight live.
-**Why:** verified against docs `invoking-agents/from-solidity` (interface ships BOTH
-`getRequest` and `hasRequest` — the tell that requests stop existing) + selector brute-force.
+**Code-only EOA polling does NOT work — do not retry it.** The finalize tx carries the
+result NOWHERE an EOA can read it: it emits only `RequestFinalized(id,status)` +
+`SubcommitteePaid(...)`, and the result bytes are absent from every event, storage-readable
+view, and the public receipt API. An EOA with a zero callback has its result discarded, so
+polling `responses[]` essentially never wins the deletion race (proven on live testnet; a
+web claim that `RequestFinalized` carries `bytes result` is WRONG).
+**The ONLY working pattern is a relay contract that IS the callback.** Forward the request
+with the relay as `callbackAddress` + the handler's selector; in the platform-only
+`handleResponse`, pick the first `Success` response and re-EMIT it as an event (not SSTORE —
+cheaper, permanent, race-free). The off-chain runner reads the result from that event log
+filtered by `requestId`. Gate the native path on the relay being configured — otherwise skip
+it entirely so no STT is wasted creating a request whose result can't be read.
+**Handler must never revert on the platform path** (it runs inside finalization); keep it a
+single scan + one event, guard with `msg.sender == platform`, and make it idempotent.
+**Why:** finalize-tx event analysis (ethers v6) + the platform shipping both `getRequest`
+and `hasRequest` (the tell that requests are deleted on consensus).
 
 ## How to apply
 Cannot test end-to-end without a funded wallet + real `SOMNIA_LLM_AGENT_ID` on live
