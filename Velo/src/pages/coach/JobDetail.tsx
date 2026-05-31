@@ -20,7 +20,7 @@ import {
   useCancelExpired,
 } from "@/hooks/useVeloContracts";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
-import { shortAddr, timeUntil, formatStt } from "@/lib/format";
+import { shortAddr, timeUntil, formatStt, explorerTx } from "@/lib/format";
 import { toStrokeReport, toPrescriptionPlan } from "@/lib/domain/tennis";
 import { cleanFallbackReason } from "@/lib/domain/fallback";
 import {
@@ -79,9 +79,18 @@ function decodeReceipt(raw: unknown): DecodedReceipt | null {
 }
 
 export default function JobDetail({ jobId }: { jobId: Hex }) {
-  const { data: job, isLoading: jobLoading } = useJob(jobId);
-  const { data: formReceiptRaw } = useFormReceipt(jobId);
-  const { data: rxReceiptRaw } = usePrescriptionReceipt(jobId);
+  // Live-poll on-chain state until the session reaches a terminal stage so the
+  // timeline advances without a manual reload while the agents are working.
+  // `useJob` stops polling on its own once the job is Completed/Cancelled; the
+  // receipt + indexer queries are told to stop on cancellation (no receipt will
+  // ever arrive) and stop naturally once their data lands for completed jobs.
+  const { data: job, isLoading: jobLoading } = useJob(jobId, { poll: true });
+  const isCancelled = job?.status === "Cancelled";
+  const isTerminal = isCancelled || job?.status === "Completed";
+  const { data: formReceiptRaw } = useFormReceipt(jobId, { poll: !isCancelled });
+  const { data: rxReceiptRaw } = usePrescriptionReceipt(jobId, {
+    poll: !isCancelled,
+  });
   const { writeContract: cancel } = useCancelExpired();
   const { resolve, ensure } = useAthleteDirectory();
 
@@ -90,11 +99,22 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
 
   // Indexer-supplied {receipt, signature} — gates the "Verified" badge so we
   // can prove the agent signed each receipt without trusting the orchestrator.
+  // Poll until the prescription provenance is hydrated, then stop. Bail out on
+  // cancellation, a disabled indexer, or a terminal job whose indexer errors,
+  // so finished pages don't poll forever.
   const indexerQ = useQuery({
     queryKey: ["velo:indexer:receipts", jobId],
     enabled: !!jobId && (!!formReceipt || !!rxReceipt),
     staleTime: 30_000,
     retry: false,
+    refetchInterval: (query) => {
+      const r = query.state.data;
+      if (r?.status === "ready" && r.data.prescription) return false;
+      if (isCancelled) return false;
+      if (r?.status === "not-configured") return false;
+      if (isTerminal && r?.status === "error") return false;
+      return 5000;
+    },
     queryFn: async () => fetchIndexedReceipts(jobId),
   });
   const indexed: IndexedReceipts | null =
@@ -652,16 +672,28 @@ function SomniaProvenancePanel({ provenance }: { provenance: AiProvenance | null
               <Row label="Consensus" value={somnia.consensusStatus} tone="amber" />
             )}
           </div>
-          {somnia?.receiptUrl && (
-            <a
-              href={somnia.receiptUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="mt-3 inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
-            >
-              View consensus receipt <ExternalLink className="w-3 h-3" />
-            </a>
-          )}
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            {somnia?.txHash && (
+              <a
+                href={explorerTx(somnia.txHash)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+              >
+                View on Somnia explorer <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+            {somnia?.receiptUrl && (
+              <a
+                href={somnia.receiptUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+              >
+                View consensus receipt <ExternalLink className="w-3 h-3" />
+              </a>
+            )}
+          </div>
         </>
       ) : (
         <p className="text-xs text-muted-foreground leading-relaxed break-words">
