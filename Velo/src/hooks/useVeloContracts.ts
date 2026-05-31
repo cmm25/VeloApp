@@ -117,7 +117,21 @@ function decodeJob(jobId: Hex, raw: unknown): Job | null {
   };
 }
 
-export function useJob(jobId?: Hex) {
+/** Poll cadence (ms) for the live Job Detail view. */
+const LIVE_POLL_MS = 4000;
+
+/**
+ * `getFormReceipt`/`getPrescriptionReceipt` return a zero-filled struct (not a
+ * revert) before a receipt is submitted, so a truthy `data` does NOT mean a
+ * receipt exists. A real receipt always has a non-zero `agent`.
+ */
+function hasRealReceipt(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const agent = (raw as Record<string, unknown>).agent;
+  return typeof agent === "string" && agent.toLowerCase() !== ZERO_ADDR;
+}
+
+export function useJob(jobId?: Hex, opts: { poll?: boolean } = {}) {
   const orch = orchestratorAddress();
   const enabled = !!orch && !!jobId;
   const q = useReadContract({
@@ -125,7 +139,20 @@ export function useJob(jobId?: Hex) {
     abi: veloOrchestratorAbi,
     functionName: "getJob",
     args: jobId ? [jobId] : undefined,
-    query: { enabled },
+    query: {
+      enabled,
+      // While live, poll until the job reaches a terminal state, then stop.
+      refetchInterval: opts.poll
+        ? (query) => {
+            const raw = query.state.data;
+            if (raw === undefined || !jobId) return LIVE_POLL_MS;
+            const status = decodeJob(jobId, raw)?.status;
+            return status === "Completed" || status === "Cancelled"
+              ? false
+              : LIVE_POLL_MS;
+          }
+        : false,
+    },
   });
   return {
     ...q,
@@ -133,7 +160,7 @@ export function useJob(jobId?: Hex) {
   };
 }
 
-export function useFormReceipt(jobId?: Hex) {
+export function useFormReceipt(jobId?: Hex, opts: { poll?: boolean } = {}) {
   const orch = orchestratorAddress();
   const enabled = !!orch && !!jobId;
   return useReadContract({
@@ -141,11 +168,23 @@ export function useFormReceipt(jobId?: Hex) {
     abi: veloOrchestratorAbi,
     functionName: "getFormReceipt",
     args: jobId ? [jobId] : undefined,
-    query: { enabled, retry: false },
+    query: {
+      enabled,
+      retry: false,
+      // Poll until a real receipt lands on-chain, then stop. Callers pass
+      // `poll: false` once the job is terminal so cancelled jobs don't poll
+      // forever waiting for a receipt that will never arrive.
+      refetchInterval: opts.poll
+        ? (query) => (hasRealReceipt(query.state.data) ? false : LIVE_POLL_MS)
+        : false,
+    },
   });
 }
 
-export function usePrescriptionReceipt(jobId?: Hex) {
+export function usePrescriptionReceipt(
+  jobId?: Hex,
+  opts: { poll?: boolean } = {},
+) {
   const orch = orchestratorAddress();
   const enabled = !!orch && !!jobId;
   return useReadContract({
@@ -153,7 +192,15 @@ export function usePrescriptionReceipt(jobId?: Hex) {
     abi: veloOrchestratorAbi,
     functionName: "getPrescriptionReceipt",
     args: jobId ? [jobId] : undefined,
-    query: { enabled, retry: false },
+    query: {
+      enabled,
+      retry: false,
+      // Poll until a real prescription lands on-chain, then stop. Callers pass
+      // `poll: false` once the job is terminal to avoid endless polling.
+      refetchInterval: opts.poll
+        ? (query) => (hasRealReceipt(query.state.data) ? false : LIVE_POLL_MS)
+        : false,
+    },
   });
 }
 
