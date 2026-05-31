@@ -606,7 +606,11 @@ function ReceiptRow({
 }) {
   const { data: ipfs, isLoading: ipfsLoading } = useIpfsJson(r.ipfsCid);
   const summary = summaryFromReport(ipfs);
-  const { data: job } = useJob(r.jobId);
+  // Live-poll on-chain state so an in-flight session advances (Form ->
+  // Prescriber -> Appended) without a manual reload. `useJob` stops polling on
+  // its own once the job reaches a terminal state (Completed/Cancelled),
+  // mirroring the coach's Job Detail view.
+  const { data: job } = useJob(r.jobId, { poll: true });
   const videoCid = job?.videoCid?.trim() ?? "";
   const isDemoCid = videoCid.startsWith("local:");
   const inLibrary = videoCid ? libraryCids.has(videoCid.toLowerCase()) : true;
