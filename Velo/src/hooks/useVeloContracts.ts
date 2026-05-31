@@ -6,7 +6,7 @@ import {
   useReadContracts,
   useWriteContract,
 } from "wagmi";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import type { Address, Hex } from "viem";
 import { veloOrchestratorAbi, athleteSbtAbi } from "@/lib/web3/abis";
 import { deployment } from "@/lib/web3/deployment";
@@ -301,15 +301,32 @@ export function useJobsByIds(jobIds: Hex[]) {
   return { jobs, isLoading: stateQ.isLoading, refetch: stateQ.refetch };
 }
 
-/** Read every receipt attached to an athlete's SBT. */
-export function useAthleteReceipts(athlete?: Address) {
+/**
+ * Read every receipt attached to an athlete's SBT.
+ *
+ * Pass `{ poll: true }` to auto-refresh the list while a session is in flight,
+ * so a brand-new receipt appended on-chain shows up without a manual reload.
+ * The caller is expected to drop `poll` back to `false` once nothing is in
+ * flight (mirroring how `useJob` stops polling at a terminal state) so an idle
+ * athlete page is not polling forever.
+ */
+export function useAthleteReceipts(
+  athlete?: Address,
+  opts: { poll?: boolean } = {},
+) {
   const sbt = sbtAddress();
   const countQ = useReadContract({
     address: sbt ?? undefined,
     abi: athleteSbtAbi,
     functionName: "receiptCount",
     args: athlete ? [athlete] : undefined,
-    query: { enabled: !!sbt && !!athlete },
+    query: {
+      enabled: !!sbt && !!athlete,
+      // While live, re-read the count so a freshly appended receipt is picked
+      // up; a growing count grows the `receiptAt` batch below and the new row
+      // renders on its own. Stops as soon as the caller drops `poll`.
+      refetchInterval: opts.poll ? LIVE_POLL_MS : false,
+    },
   });
   const count = countQ.data ? Number(countQ.data) : 0;
 
@@ -318,7 +335,18 @@ export function useAthleteReceipts(athlete?: Address) {
     abi: athleteSbtAbi,
     functionName: "tokenIdOf",
     args: athlete ? [athlete] : undefined,
-    query: { enabled: !!sbt && !!athlete },
+    query: {
+      enabled: !!sbt && !!athlete,
+      // The SBT is minted lazily on the athlete's first receipt; while live,
+      // keep reading the id until it's non-zero so the SBT badge fills in on
+      // its own, then stop.
+      refetchInterval: opts.poll
+        ? (query) =>
+            query.state.data && (query.state.data as bigint) > 0n
+              ? false
+              : LIVE_POLL_MS
+        : false,
+    },
   });
 
   const listQ = useReadContracts({
@@ -328,7 +356,12 @@ export function useAthleteReceipts(athlete?: Address) {
       functionName: "receiptAt" as const,
       args: [athlete!, BigInt(i)] as const,
     })),
-    query: { enabled: !!sbt && !!athlete && count > 0 },
+    query: {
+      enabled: !!sbt && !!athlete && count > 0,
+      // When the count grows the batch is a new query; keep the existing rows
+      // on screen while the larger batch loads so the list doesn't flash empty.
+      placeholderData: keepPreviousData,
+    },
   });
 
   const receipts = useMemo<SbtReceiptRef[]>(() => {
@@ -343,6 +376,10 @@ export function useAthleteReceipts(athlete?: Address) {
     count,
     receipts,
     isLoading: countQ.isLoading || tokenIdQ.isLoading || listQ.isLoading,
+    refetch: () => {
+      countQ.refetch();
+      listQ.refetch();
+    },
   };
 }
 
