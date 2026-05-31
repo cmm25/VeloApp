@@ -84,9 +84,11 @@ export async function reason<T>(opts: {
   }
 
   // Native path disabled or not configured.
-  const reasonMsg = config.somniaAgents.enabled
-    ? "SOMNIA_LLM_AGENT_ID not configured"
-    : "Somnia native agents disabled";
+  const reasonMsg = !config.somniaAgents.enabled
+    ? "Somnia native agents disabled"
+    : !config.somniaAgents.relayAddress
+    ? "SOMNIA_AGENT_RELAY_ADDRESS not set (native on-chain result requires the deployed relay)"
+    : "SOMNIA_LLM_AGENT_ID not configured";
   log.info(`Reasoning via Groq fallback [${label}]`, { reason: reasonMsg });
   const data = await callAI(prompt, schema, label);
   return {

@@ -56,6 +56,11 @@ export const config = {
       "SOMNIA_AGENTS_CONTRACT",
       "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776"
     ),
+    // VeloAgentRelay address (from deployments/somniaTestnet.json after deploy).
+    // REQUIRED for the native on-chain path: the platform delivers an agent's
+    // result ONLY to the requester's on-chain callback, so without the relay the
+    // result is unreadable and we must use Groq directly (no wasted STT).
+    relayAddress: optional("SOMNIA_AGENT_RELAY_ADDRESS", ""),
     // Live agent IDs from https://agents.testnet.somnia.network/ — the LLM
     // Inference agent ID must be set for the native path to activate.
     llmAgentId: optional("SOMNIA_LLM_AGENT_ID", ""),
