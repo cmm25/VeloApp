@@ -467,12 +467,12 @@ function Row({
   tone?: "amber" | "danger";
 }) {
   return (
-    <div className="flex justify-between">
-      <span className="text-chalk/50">{label}</span>
+    <div className="flex justify-between gap-3">
+      <span className="text-chalk/50 shrink-0">{label}</span>
       <span
-        className={
+        className={`min-w-0 text-right break-all ${
           tone === "danger" ? "text-destructive" : tone === "amber" ? "text-amber" : "text-chalk/80"
-        }
+        }`}
       >
         {value}
       </span>
@@ -663,14 +663,42 @@ function SomniaProvenancePanel({ provenance }: { provenance: AiProvenance | null
           )}
         </>
       ) : (
-        <p className="text-xs text-muted-foreground leading-relaxed">
+        <p className="text-xs text-muted-foreground leading-relaxed break-words">
           Somnia native agents were unavailable, so this verdict was produced by
           the off-chain fallback model.
-          {provenance.fallbackReason ? ` (${provenance.fallbackReason})` : ""}
+          {(() => {
+            const reason = cleanFallbackReason(provenance.fallbackReason);
+            return reason ? ` (${reason})` : "";
+          })()}
         </p>
       )}
     </div>
   );
+}
+
+/**
+ * The raw `fallbackReason` can carry an ethers `CALL_EXCEPTION` dump (action,
+ * data="0x…", code, version) that overflows the card. Keep only the concise
+ * human-readable lead, cutting at the first raw-detail marker.
+ */
+function cleanFallbackReason(raw: string | undefined): string {
+  if (!raw) return "";
+  let s = raw.trim();
+  const markers = [
+    " Last RPC error",
+    " (action=",
+    " (error=",
+    " code=CALL_EXCEPTION",
+    ' data="0x',
+  ];
+  let cut = s.length;
+  for (const m of markers) {
+    const i = s.indexOf(m);
+    if (i !== -1 && i < cut) cut = i;
+  }
+  s = s.slice(0, cut).trim();
+  // Drop any dangling opener / dash left behind by the cut.
+  return s.replace(/[\s—(]+$/, "").trim();
 }
 
 // ---------- Integrity / verifier panel ----------
