@@ -39,7 +39,7 @@ import {
   type ReceiptStruct,
 } from "@/lib/web3/eip712";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
-import { useIpfsJson } from "@/lib/web3/ipfs";
+import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 import { type IndexedEntry, type AiProvenance } from "@/lib/web3/indexer";
 import { somniaTestnet } from "@/lib/web3/chain";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
@@ -285,6 +285,19 @@ export function ReceiptStage({
   const [verifyState, setVerifyState] = useState<VerifyState>({ phase: "idle" });
   const verifiedOk = verifyState.phase === "verified" && verifyState.ok;
   const ipfs = ipfsQuery.data ?? null;
+  const ipfsSomniaReceiptUrl = somniaReceiptUrlFromJson(ipfs);
+  const nativeReceiptUrl =
+    indexedEntry?.provenance?.path === "native"
+      ? indexedEntry.provenance.somnia?.receiptUrl
+      : null;
+  const preferredSomniaReceiptUrl =
+    kind === "rx" ? (nativeReceiptUrl ?? ipfsSomniaReceiptUrl) : null;
+  const externalUrl =
+    preferredSomniaReceiptUrl ??
+    (receipt?.ipfsCid && !receipt.ipfsCid.startsWith("local:")
+      ? ipfsGatewayUrl(receipt.ipfsCid)
+      : undefined);
+  const externalLabel = preferredSomniaReceiptUrl ? "Somnia Receipt" : "IPFS";
 
   return (
     <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group">
@@ -316,20 +329,16 @@ export function ReceiptStage({
                 <ProvenanceBadge verified={verifiedOk} />
               </div>
               <a
-                href={
-                  receipt.ipfsCid.startsWith("local:")
-                    ? undefined
-                    : ipfsGatewayUrl(receipt.ipfsCid)
-                }
+                href={externalUrl}
                 target="_blank"
                 rel="noreferrer"
                 className={`inline-flex items-center gap-1 text-[10px] font-mono ${
-                  receipt.ipfsCid.startsWith("local:")
+                  !externalUrl
                     ? "text-muted-foreground pointer-events-none"
                     : "text-amber hover:text-amber-soft"
                 }`}
               >
-                IPFS <ExternalLink className="w-3 h-3" />
+                {externalLabel} <ExternalLink className="w-3 h-3" />
               </a>
             </div>
 

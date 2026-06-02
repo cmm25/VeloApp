@@ -28,7 +28,7 @@ import {
 } from "@/lib/domain/tapes";
 import { shortAddr, shortHash } from "@/lib/format";
 import { ipfsGatewayUrl, uploadVideo } from "@/lib/web3/uploader";
-import { useIpfsJson, summaryFromReport } from "@/lib/web3/ipfs";
+import { useIpfsJson, summaryFromReport, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 import { InsightBar } from "@/components/InsightBar";
 import {
   useMyCoaches,
@@ -615,6 +615,7 @@ function ReceiptRow({
 }) {
   const { data: ipfs, isLoading: ipfsLoading } = useIpfsJson(r.ipfsCid);
   const summary = summaryFromReport(ipfs);
+  const somniaReceiptUrl = somniaReceiptUrlFromJson(ipfs);
   // Live-poll on-chain state so an in-flight session advances (Form ->
   // Prescriber -> Appended) without a manual reload. `useJob` stops polling on
   // its own once the job reaches a terminal state (Completed/Cancelled),
@@ -684,14 +685,14 @@ function ReceiptRow({
             </div>
           </div>
 
-          {r.ipfsCid && !r.ipfsCid.startsWith("local:") && (
+          {(somniaReceiptUrl || (r.ipfsCid && !r.ipfsCid.startsWith("local:"))) && (
             <a
-              href={ipfsGatewayUrl(r.ipfsCid)}
+              href={somniaReceiptUrl ?? ipfsGatewayUrl(r.ipfsCid)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-sm font-medium text-amber hover:text-amber-soft transition-colors"
             >
-              View Raw JSON <ExternalLink className="w-3.5 h-3.5" />
+              {somniaReceiptUrl ? "Somnia Receipt" : "View Raw JSON"} <ExternalLink className="w-3.5 h-3.5" />
             </a>
           )}
         </div>
