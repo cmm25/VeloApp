@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useReadContract, useReadContracts, usePublicClient } from "wagmi";
 import { useQuery } from "@tanstack/react-query";
-import type { Address, Hex, AbiEvent } from "viem";
+import { keccak256, toBytes, type Address, type Hex, type AbiEvent } from "viem";
 import { agentRegistryAbi, reputationAbi } from "@/lib/web3/abis";
 import { getRecentLogs } from "@/lib/web3/logs";
 import {
@@ -163,11 +163,39 @@ export function useAgentActivity(address?: Address) {
   });
 }
 
-/** Short, human label for an agent's skill. Skills are bytes32 keccak labels. */
+/**
+ * Short, human labels for an agent's skills. On-chain a skill is the
+ * `keccak256(utf8Bytes(name))` of a canonical string (see the agent registry +
+ * `velo-agents` registration), so the raw value is an opaque bytes32 hash. We
+ * keep a catalog of the known canonical names, hash each one the same way the
+ * contracts do, and map the resulting hash back to a friendly label.
+ */
+const SKILL_NAMES: Record<string, string> = {
+  "vision.pose": "Pose & Form Vision",
+  "coaching.tactics": "Coaching Tactics",
+  "coaching.drills": "Coaching Drills",
+  "velo.v1": "Velo v1",
+};
+
 const KNOWN_SKILLS: Record<string, string> = {};
 
+/** Register a readable label for a skill given its on-chain bytes32 hash. */
 export function registerSkillLabel(skill: Hex, label: string) {
   KNOWN_SKILLS[skill.toLowerCase()] = label;
+}
+
+/** Register a readable label for a skill given its canonical name. */
+export function registerSkillName(name: string, label = name) {
+  registerSkillLabel(keccak256(toBytes(name)), label);
+}
+
+for (const [name, label] of Object.entries(SKILL_NAMES)) {
+  registerSkillName(name, label);
+}
+
+/** True when the skill hash maps to a known, human-readable label. */
+export function isKnownSkill(skill: Hex): boolean {
+  return skill.toLowerCase() in KNOWN_SKILLS;
 }
 
 export function skillLabel(skill: Hex): string {
