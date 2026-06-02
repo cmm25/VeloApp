@@ -68,7 +68,7 @@ export function decodeReceipt(raw: unknown): DecodedReceipt | null {
   };
 }
 
-// ---------- Layout primitives ----------
+// Layout primitives
 
 export function Stage({
   done,
@@ -149,7 +149,7 @@ function SummaryBlock({ label, text }: { label: string; text: string }) {
   );
 }
 
-// ---------- Form / prescription report views ----------
+// Form / prescription report views
 
 export function FormReportView({
   report,
@@ -264,7 +264,7 @@ export function PrescriptionReportView({
   );
 }
 
-// ---------- Receipt stage with IPFS + verifier ----------
+// Receipt stage with IPFS + verifier
 
 export function ReceiptStage({
   kind,
@@ -362,7 +362,7 @@ export function ReceiptStage({
   );
 }
 
-// ---------- Somnia native-agent provenance ----------
+// Somnia native-agent provenance
 
 /**
  * Shows whether this AI step was produced by Somnia's native LLM Inference
@@ -452,7 +452,7 @@ function SomniaProvenancePanel({ provenance }: { provenance: AiProvenance | null
   );
 }
 
-// ---------- Integrity / verifier panel ----------
+// Integrity / verifier panel
 
 type VerifyState =
   | { phase: "idle" }

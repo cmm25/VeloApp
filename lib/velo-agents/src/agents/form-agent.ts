@@ -151,7 +151,7 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
   );
 }
 
-// ── Vision engine call ─────────────────────────────────────────────────────────
+// Vision engine call
 
 async function fetchTelemetry(
   videoUrl: string | null,

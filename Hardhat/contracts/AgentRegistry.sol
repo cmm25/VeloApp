@@ -51,8 +51,6 @@ contract AgentRegistry is IAgentRegistry {
     );
     event AgentActiveChanged(address indexed agent, bool active);
 
-    // ──────────────────── IAgentRegistry ────────────────────
-
     function isRegistered(address agent) external view override returns (bool) {
         return _agents[agent].exists;
     }
@@ -61,8 +59,6 @@ contract AgentRegistry is IAgentRegistry {
         Agent storage a = _agents[agent];
         return a.exists && a.active;
     }
-
-    // ──────────────────── self-service ────────────────────
 
     /// @notice Register the caller as an agent.
     function register(
@@ -152,8 +148,6 @@ contract AgentRegistry is IAgentRegistry {
         emit AgentActiveChanged(msg.sender, active);
     }
 
-    // ──────────────────── views ────────────────────
-
     function getAgent(address agent) external view returns (Agent memory) {
         if (!_agents[agent].exists) revert NotRegistered(agent);
         return _agents[agent];
@@ -174,8 +168,6 @@ contract AgentRegistry is IAgentRegistry {
     function agentCount() external view returns (uint256) {
         return _agentList.length;
     }
-
-    // ──────────────────── internal ────────────────────
 
     function _removeFromSkill(bytes32 skill, address agent) private {
         _skillMember[skill][agent] = false;

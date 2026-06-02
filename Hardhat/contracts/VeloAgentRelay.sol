@@ -66,8 +66,6 @@ contract VeloAgentRelay is AccessControl, ISomniaAgentHandler {
         }
     }
 
-    // ──────────────────── request entrypoint ────────────────────
-
     /// @notice Forward an agent request to the platform with this relay as the
     ///         callback target. Forwards the full `msg.value` as the deposit.
     /// @dev    Operator-only. Any unused deposit is rebated by the platform to
@@ -86,8 +84,6 @@ contract VeloAgentRelay is AccessControl, ISomniaAgentHandler {
         );
         emit RelayRequestCreated(requestId, agentId, msg.sender);
     }
-
-    // ──────────────────── platform callback ────────────────────
 
     /// @inheritdoc ISomniaAgentHandler
     /// @dev MUST stay minimal and non-reverting on the platform path: picks the
@@ -128,8 +124,6 @@ contract VeloAgentRelay is AccessControl, ISomniaAgentHandler {
         emit ResultReady(requestId, finalStatus, chosen);
     }
 
-    // ──────────────────── views ────────────────────
-
     /// @notice Whether a result has landed for `requestId`, and its status.
     /// @dev    The result BYTES live in the `ResultReady` event, not storage.
     function getResult(uint256 requestId)
@@ -146,8 +140,6 @@ contract VeloAgentRelay is AccessControl, ISomniaAgentHandler {
     function getRequestDeposit() external view returns (uint256) {
         return platform.getRequestDeposit();
     }
-
-    // ──────────────────── funds ────────────────────
 
     /// @notice Reclaim accumulated deposit rebates.
     function withdraw(address payable to) external onlyRole(DEFAULT_ADMIN_ROLE) {

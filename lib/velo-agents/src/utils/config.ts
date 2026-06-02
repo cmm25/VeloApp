@@ -43,7 +43,7 @@ export const config = {
     prescriberPrivateKey: optional("AGENT_PRESCRIBER_PRIVATE_KEY"),
   },
 
-  // ── Somnia native Agentic L1 (SomniaAgents / IAgentRequester platform) ──────
+  // Somnia native Agentic L1 (SomniaAgents / IAgentRequester platform)
   // When enabled, AI reasoning is produced by Somnia's native LLM Inference
   // agent (consensus-verified, with on-chain receipts) and falls back to Groq
   // automatically on timeout / unavailability / insufficient runners.

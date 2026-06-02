@@ -72,8 +72,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
     mapping(address => uint256) public pendingOf;
     mapping(address => uint256) public nonceOf;
 
-    // ──────────────────── events ────────────────────
-
     event BountyPosted(
         uint256 indexed bountyId,
         address indexed poster,
@@ -115,8 +113,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         string summary
     );
 
-    // ──────────────────── errors ────────────────────
-
     error ZeroAddress();
     error FeeBelowMin(uint256 sent);
     error DeadlinePassed();
@@ -150,8 +146,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         reputation = Reputation(reputation_);
         minBountyFee = minBountyFee_;
     }
-
-    // ──────────────────── poster lifecycle ────────────────────
 
     function postBounty(
         address athlete,
@@ -235,8 +229,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         emit BidAccepted(bountyId, bidId, bd.agent, fee, refund);
         emit JobStarted(bountyId, bd.agent, b.deadline);
     }
-
-    // ──────────────────── lead/agent lifecycle ────────────────────
 
     function subContract(uint256 bountyId, address subAgent) external {
         Bounty storage b = _bounties[bountyId];
@@ -365,8 +357,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         return amount;
     }
 
-    // ──────────────────── views ────────────────────
-
     function getBounty(uint256 bountyId) external view returns (Bounty memory) {
         Bounty memory b = _bounties[bountyId];
         if (b.status == BountyStatus.None) revert BountyNotFound();
@@ -384,8 +374,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
     }
-
-    // ──────────────────── internal ────────────────────
 
     function _verifyReceipt(
         Bounty storage b,

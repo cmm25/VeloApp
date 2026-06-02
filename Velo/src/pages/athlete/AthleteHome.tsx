@@ -288,7 +288,7 @@ export default function AthleteHome() {
   );
 }
 
-// ---------- Pending roster requests ----------
+// Pending roster requests
 
 function PendingRequestsSection({ address }: { address: `0x${string}` }) {
   const q = useMyRosterRequests(!!address);
@@ -352,7 +352,7 @@ function PendingRequestsSection({ address }: { address: `0x${string}` }) {
   );
 }
 
-// ---------- Coaches section ----------
+// Coaches section
 
 function CoachesSection({ address }: { address: `0x${string}` }) {
   const q = useMyCoaches(!!address);
@@ -396,7 +396,7 @@ function CoachesSection({ address }: { address: `0x${string}` }) {
   );
 }
 
-// ---------- Tape library section ----------
+// Tape library section
 
 function TapeLibrarySection({ address }: { address: `0x${string}` }) {
   const tapesQ = useTapes(address);
@@ -598,7 +598,7 @@ function TapeRow({
   );
 }
 
-// ---------- Receipt row ----------
+// Receipt row
 
 function ReceiptRow({
   r,
