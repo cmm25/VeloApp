@@ -7,7 +7,14 @@ import {
   useWatchContractEvent,
 } from "wagmi";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { parseEther, type Address, type Hex, type AbiEvent } from "viem";
+import {
+  parseEther,
+  BaseError,
+  ContractFunctionRevertedError,
+  type Address,
+  type Hex,
+  type AbiEvent,
+} from "viem";
 import { bountyExtensionAbi } from "@/lib/web3/abis";
 import { bountyExtensionAddress } from "@/hooks/useVeloContracts";
 import { somniaTestnet } from "@/lib/web3/chain";
@@ -378,6 +385,46 @@ export function useBountyTimeline(id?: bigint) {
 }
 
 // ─────────────────── write hooks ───────────────────
+
+/**
+ * Friendly messages for the BountyExtension custom errors a bidder can hit.
+ * The deployed contract reverts with these custom errors, but Somnia's RPC
+ * surfaces them generically (e.g. "invalid transaction"); decoding against the
+ * ABI lets us show the real reason.
+ */
+const BID_ERROR_MESSAGES: Record<string, string> = {
+  AgentNotRegistered:
+    "Only registered, active agents can bid. Register your agent in the directory first.",
+  AgentMissingSkill:
+    "Your agent doesn't have a skill this bounty requires.",
+  DeadlinePassed: "This bounty's deadline has already passed.",
+  BountyNotOpen: "This bounty is no longer open for bids.",
+  BountyNotFound: "This bounty could not be found.",
+};
+
+/** Turn a thrown bid error into a human-readable message. */
+export function describeBidError(e: unknown): string {
+  if (e instanceof BaseError) {
+    const revert = e.walk(
+      (err) => err instanceof ContractFunctionRevertedError,
+    );
+    if (revert instanceof ContractFunctionRevertedError) {
+      const name = revert.data?.errorName;
+      if (name) {
+        return BID_ERROR_MESSAGES[name] ?? `Bid rejected on-chain (${name}).`;
+      }
+    }
+    const short = e.shortMessage ?? e.message;
+    if (/user rejected|denied|rejected the request/i.test(short)) {
+      return "Transaction rejected in your wallet.";
+    }
+    if (/invalid transaction/i.test(short)) {
+      return "The bid was rejected on-chain. Make sure your wallet is a registered agent eligible for this bounty.";
+    }
+    return short;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
 
 export function usePlaceBid() {
   const ext = bountyExtensionAddress();

@@ -10,6 +10,7 @@ import {
   useExpireBounty,
   usePlaceBid,
   parseSttToWei,
+  describeBidError,
   type TimelineEntry,
 } from "@/lib/domain/bounties";
 import { useAgent } from "@/lib/domain/agents";
@@ -50,11 +51,27 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
   const [bidFee, setBidFee] = useState("");
   const [bidDeadlineHours, setBidDeadlineHours] = useState(24);
 
+  const { data: myAgent, isLoading: myAgentLoading } = useAgent(me);
+
   const isPoster =
     !!bounty && !!me && bounty.poster.toLowerCase() === me.toLowerCase();
   const isExpired =
     !!bounty && Date.now() / 1000 > Number(bounty.deadline) && bounty.status === "Open";
-  const canBid = !!bounty && bounty.status === "Open" && !isExpired && !!me && !isPoster;
+
+  const isActiveAgent = !!myAgent && myAgent.exists && myAgent.active;
+  const requiredSkills = bounty?.requiredSkills ?? [];
+  const hasRequiredSkill =
+    requiredSkills.length === 0 ||
+    (!!myAgent &&
+      requiredSkills.some((rs) =>
+        myAgent.skills.some((s) => s.toLowerCase() === rs.toLowerCase()),
+      ));
+  const isEligibleAgent = isActiveAgent && hasRequiredSkill;
+
+  // Bidding is open on this bounty for someone other than the poster…
+  const bidOpen = !!bounty && bounty.status === "Open" && !isExpired && !isPoster;
+  // …but only registered, active agents with a matching skill may actually bid.
+  const canBid = bidOpen && !!me && isEligibleAgent;
 
   if (idNum === undefined) {
     return (
@@ -178,6 +195,15 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
               </div>
             )}
 
+            {bidOpen && !canBid && (
+              <BidEligibilityNotice
+                connected={!!me}
+                loading={!!me && myAgentLoading}
+                isActiveAgent={isActiveAgent}
+                hasRequiredSkill={hasRequiredSkill}
+              />
+            )}
+
             {canBid && (
               <section className="mb-10">
                 <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
@@ -238,7 +264,7 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                         refetchBounty();
                       } catch (e) {
                         toast.error("Bid failed", {
-                          description: e instanceof Error ? e.message : String(e),
+                          description: describeBidError(e),
                         });
                       }
                     }}
@@ -307,6 +333,60 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
         )}
       </main>
     </div>
+  );
+}
+
+function BidEligibilityNotice({
+  connected,
+  loading,
+  isActiveAgent,
+  hasRequiredSkill,
+}: {
+  connected: boolean;
+  loading: boolean;
+  isActiveAgent: boolean;
+  hasRequiredSkill: boolean;
+}) {
+  if (loading) {
+    return (
+      <section className="mb-10">
+        <div className="h-20 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+      </section>
+    );
+  }
+
+  let message: string;
+  if (!connected) {
+    message =
+      "Connect a wallet registered as an active coaching agent to place a bid.";
+  } else if (!isActiveAgent) {
+    message =
+      "Only registered, active coaching agents can bid on bounties. Register your agent to participate.";
+  } else if (!hasRequiredSkill) {
+    message =
+      "Your agent isn't registered for the skill this bounty requires, so it can't bid here.";
+  } else {
+    message = "This bounty isn't open to your wallet for bidding.";
+  }
+
+  return (
+    <section className="mb-10">
+      <div className="border border-border/50 bg-card/40 rounded-sm p-5 flex items-start gap-3">
+        <ShieldAlert className="w-4 h-4 text-amber/80 mt-0.5 shrink-0" />
+        <div className="min-w-0">
+          <div className="text-sm text-chalk font-medium mb-1">
+            Bidding is for registered agents
+          </div>
+          <p className="text-xs text-muted-foreground font-light">{message}</p>
+          <Link
+            href="/agents"
+            className="inline-flex items-center gap-1 text-xs text-amber hover:text-amber-soft mt-2"
+          >
+            <Bot className="w-3 h-3" /> Browse the agent registry
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }
 
