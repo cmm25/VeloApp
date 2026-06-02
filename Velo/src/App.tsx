@@ -13,7 +13,6 @@ const NewJob = lazy(() => import("@/pages/coach/NewJob"));
 const JobDetail = lazy(() => import("@/pages/coach/JobDetail"));
 const AthleteHome = lazy(() => import("@/pages/athlete/AthleteHome"));
 const AthleteWorkspace = lazy(() => import("@/pages/coach/AthleteWorkspace"));
-const Claim = lazy(() => import("@/pages/Claim"));
 const PublicProfile = lazy(() => import("@/pages/PublicProfile"));
 const AgentsDirectory = lazy(() => import("@/pages/agents/AgentsDirectory"));
 const AgentProfile = lazy(() => import("@/pages/agents/AgentProfile"));
@@ -83,9 +82,6 @@ function Router() {
               <DeleteAccount />
             </RequireWallet>
           )}
-        </Route>
-        <Route path="/claim/:token">
-          {(params) => <Claim token={params.token} />}
         </Route>
         <Route path="/p/:address">
           {(params) => <PublicProfile address={params.address} />}

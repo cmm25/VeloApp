@@ -31,36 +31,11 @@ export type RosterRequest = {
   createdAt: string;
 };
 
-export type CoachInvite = {
-  id: string;
-  coachAddress: string;
-  email: string;
-  displayName: string;
-  createdAt: string;
-  expiresAt: string;
-  claimedAt: string | null;
-  claimedAddress: string | null;
-  revokedAt: string | null;
-};
-
 export type CoachLink = {
   coachAddress: string;
   coachName: string | null;
   source: string;
   createdAt: string;
-};
-
-export type PublicInvite = {
-  id: string;
-  coachAddress: string;
-  coachLabel: string | null;
-  displayName: string;
-  createdAt: string;
-  expiresAt: string;
-  claimedAt: string | null;
-  claimedAddress: string | null;
-  revokedAt: string | null;
-  expired: boolean;
 };
 
 // ---------- Coach: roster ----------
@@ -114,66 +89,6 @@ export function useRemoveRoster() {
       return (await res.json()) as { ok: true };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["coach-roster"] }),
-  });
-}
-
-// ---------- Coach: invites ----------
-
-export function useCoachInvites(enabled: boolean) {
-  return useQuery({
-    queryKey: ["coach-invites"],
-    enabled,
-    queryFn: async (): Promise<CoachInvite[]> => {
-      const { token } = await ensureUploadSession();
-      const res = await fetch(`${API_BASE}/invites`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`invites_list_${res.status}`);
-      const body = (await res.json()) as { invites: CoachInvite[] };
-      return body.invites;
-    },
-  });
-}
-
-export type CreateInviteResult = {
-  invite: CoachInvite;
-  email: { mode: "sent" | "demo"; reason?: string; id?: string };
-  claimUrl: string;
-};
-
-export function useCreateInvite() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { email: string; displayName: string }) => {
-      const { token } = await ensureUploadSession();
-      const res = await fetch(`${API_BASE}/invites`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify(input),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `invite_create_${res.status}`);
-      }
-      return (await res.json()) as CreateInviteResult;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["coach-invites"] }),
-  });
-}
-
-export function useRevokeInvite() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (id: string) => {
-      const { token } = await ensureUploadSession();
-      const res = await fetch(`${API_BASE}/invites/${encodeURIComponent(id)}/revoke`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error(`invite_revoke_${res.status}`);
-      return (await res.json()) as { ok: true };
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["coach-invites"] }),
   });
 }
 
@@ -278,48 +193,5 @@ export function useDeclineRosterRequest() {
       return (await res.json()) as { ok: true };
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["my-roster-requests"] }),
-  });
-}
-
-// ---------- Public: invite preview (claim page) ----------
-
-export function useInviteByToken(token: string | undefined) {
-  return useQuery({
-    queryKey: ["invite", token],
-    enabled: !!token && token.length >= 16,
-    queryFn: async (): Promise<PublicInvite> => {
-      const res = await fetch(`${API_BASE}/invites/by-token/${encodeURIComponent(token!)}`);
-      if (res.status === 404) throw new Error("not_found");
-      if (!res.ok) throw new Error(`invite_lookup_${res.status}`);
-      const body = (await res.json()) as { invite: PublicInvite };
-      return body.invite;
-    },
-    retry: false,
-  });
-}
-
-// ---------- Athlete: claim invite (SIWE) ----------
-
-export function useClaimInvite() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (token: string) => {
-      const { token: sess } = await ensureUploadSession();
-      const res = await fetch(
-        `${API_BASE}/invites/by-token/${encodeURIComponent(token)}/claim`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${sess}` },
-        },
-      );
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `invite_claim_${res.status}`);
-      }
-      return (await res.json()) as { ok: true; coachAddress: string; alreadyClaimed?: boolean };
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["my-coaches"] });
-    },
   });
 }

@@ -8,6 +8,8 @@ import pinataRouter from "./routes/pinata.js";
 import receiptsRouter from "./routes/receipts.js";
 import tapesRouter from "./routes/tapes.js";
 import athletesRouter from "./routes/athletes.js";
+import rosterRouter from "./routes/roster.js";
+import meRouter from "./routes/me.js";
 
 const log = makeLogger("api");
 
@@ -23,6 +25,8 @@ export function createServer() {
   app.use("/api/receipts", receiptsRouter);
   app.use("/api/tapes", tapesRouter);
   app.use("/api/athletes", athletesRouter);
+  app.use("/api/roster", rosterRouter);
+  app.use("/api/me", meRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });
@@ -47,6 +51,15 @@ export function startServer(): Promise<void> {
       log.info(`  GET  /api/athletes`);
       log.info(`  PUT  /api/athletes/:address`);
       log.info(`  POST /api/athletes/verify-claim`);
+      log.info(`  GET  /api/roster`);
+      log.info(`  POST /api/roster`);
+      log.info(`  DEL  /api/roster/:address`);
+      log.info(`  GET  /api/roster/pending`);
+      log.info(`  GET  /api/roster/coaches/:address`);
+      log.info(`  GET  /api/me/coaches`);
+      log.info(`  GET  /api/me/roster-requests`);
+      log.info(`  POST /api/me/roster-requests/:id/accept`);
+      log.info(`  POST /api/me/roster-requests/:id/decline`);
       resolve();
     });
   });
