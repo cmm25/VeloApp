@@ -36,7 +36,7 @@ async function sha256Hex(buf: ArrayBuffer): Promise<string> {
     .join("");
 }
 
-// ---------- Session token ----------
+// Session token
 
 type CachedSession = { token: string; exp: number; address: string };
 const SESSION_KEY = "velo:upload-session:v1";
@@ -94,7 +94,7 @@ export async function ensureUploadSession(): Promise<{ token: string; address: s
   return { token, address };
 }
 
-// ---------- Upload ----------
+// Upload
 
 export async function uploadVideo(
   file: File,

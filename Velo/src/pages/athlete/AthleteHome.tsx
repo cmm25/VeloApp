@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useAccount, useSignMessage } from "wagmi";
+import { useAccount, usePublicClient, useSignMessage } from "wagmi";
 import { TopBar } from "@/components/TopBar";
 import { AthleteMonogram } from "@/components/AthleteMonogram";
 import { VerifiedBadge } from "@/components/VerifiedBadge";
@@ -10,8 +10,12 @@ import {
   useTokenUri,
   useJob,
   decodeTokenUri,
+  orchestratorAddress,
+  sbtAddress,
   type SbtReceiptRef,
 } from "@/hooks/useVeloContracts";
+import { veloOrchestratorAbi, athleteSbtAbi } from "@/lib/web3/abis";
+import { somniaTestnet } from "@/lib/web3/chain";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import {
   useTapes,
@@ -24,7 +28,7 @@ import {
 } from "@/lib/domain/tapes";
 import { shortAddr, shortHash } from "@/lib/format";
 import { ipfsGatewayUrl, uploadVideo } from "@/lib/web3/uploader";
-import { useIpfsJson, summaryFromReport } from "@/lib/web3/ipfs";
+import { useIpfsJson, summaryFromReport, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 import { InsightBar } from "@/components/InsightBar";
 import {
   useMyCoaches,
@@ -48,12 +52,24 @@ import {
   Plus,
 } from "lucide-react";
 import { Link } from "wouter";
+import { EmptyState } from "@/components/ui/states";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 
+/** How long the receipt list keeps polling after the last relevant on-chain
+ * event before it backs off (mirrors `useJob` settling into a terminal state). */
+const RECEIPT_LIVE_WINDOW_MS = 60_000;
+
 export default function AthleteHome() {
   const { address } = useAccount();
-  const { receipts, count, tokenId, isLoading } = useAthleteReceipts(address);
+  // Auto-refresh the receipt list while a session targeting this athlete is in
+  // flight. We open a live window when the athlete's job is requested or a new
+  // receipt is appended, then back off after a quiet spell so an idle page is
+  // not polling forever.
+  const receiptsLive = useReceiptsLive(address);
+  const { receipts, count, tokenId, isLoading } = useAthleteReceipts(address, {
+    poll: receiptsLive,
+  });
   const { data: tokenUriRaw } = useTokenUri(tokenId);
   const metadata = decodeTokenUri(tokenUriRaw as string | undefined);
   const { resolve, ensure, claim } = useAthleteDirectory();
@@ -237,14 +253,7 @@ export default function AthleteHome() {
               ))}
             </div>
           ) : receipts.length === 0 ? (
-            <div className="text-center py-16 border border-dashed border-border/50 rounded-sm bg-card/20">
-              <div className="w-16 h-16 bg-card border border-border/50 rounded-full flex items-center justify-center mx-auto mb-6">
-                <FileText className="w-6 h-6 text-muted-foreground" />
-              </div>
-              <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                No receipts yet
-              </p>
-            </div>
+            <EmptyState icon={FileText} title="No receipts yet" />
           ) : (
             <div className="space-y-6">
               {receipts.map((r, i) => (
@@ -279,7 +288,7 @@ export default function AthleteHome() {
   );
 }
 
-// ---------- Pending roster requests ----------
+// Pending roster requests
 
 function PendingRequestsSection({ address }: { address: `0x${string}` }) {
   const q = useMyRosterRequests(!!address);
@@ -343,7 +352,7 @@ function PendingRequestsSection({ address }: { address: `0x${string}` }) {
   );
 }
 
-// ---------- Coaches section ----------
+// Coaches section
 
 function CoachesSection({ address }: { address: `0x${string}` }) {
   const q = useMyCoaches(!!address);
@@ -387,7 +396,7 @@ function CoachesSection({ address }: { address: `0x${string}` }) {
   );
 }
 
-// ---------- Tape library section ----------
+// Tape library section
 
 function TapeLibrarySection({ address }: { address: `0x${string}` }) {
   const tapesQ = useTapes(address);
@@ -589,7 +598,7 @@ function TapeRow({
   );
 }
 
-// ---------- Receipt row ----------
+// Receipt row
 
 function ReceiptRow({
   r,
@@ -606,7 +615,12 @@ function ReceiptRow({
 }) {
   const { data: ipfs, isLoading: ipfsLoading } = useIpfsJson(r.ipfsCid);
   const summary = summaryFromReport(ipfs);
-  const { data: job } = useJob(r.jobId);
+  const somniaReceiptUrl = somniaReceiptUrlFromJson(ipfs);
+  // Live-poll on-chain state so an in-flight session advances (Form ->
+  // Prescriber -> Appended) without a manual reload. `useJob` stops polling on
+  // its own once the job reaches a terminal state (Completed/Cancelled),
+  // mirroring the coach's Job Detail view.
+  const { data: job } = useJob(r.jobId, { poll: true });
   const videoCid = job?.videoCid?.trim() ?? "";
   const isDemoCid = videoCid.startsWith("local:");
   const inLibrary = videoCid ? libraryCids.has(videoCid.toLowerCase()) : true;
@@ -671,14 +685,14 @@ function ReceiptRow({
             </div>
           </div>
 
-          {r.ipfsCid && !r.ipfsCid.startsWith("local:") && (
+          {(somniaReceiptUrl || (r.ipfsCid && !r.ipfsCid.startsWith("local:"))) && (
             <a
-              href={ipfsGatewayUrl(r.ipfsCid)}
+              href={somniaReceiptUrl ?? ipfsGatewayUrl(r.ipfsCid)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-sm font-medium text-amber hover:text-amber-soft transition-colors"
             >
-              View Raw JSON <ExternalLink className="w-3.5 h-3.5" />
+              {somniaReceiptUrl ? "Somnia Receipt" : "View Raw JSON"} <ExternalLink className="w-3.5 h-3.5" />
             </a>
           )}
         </div>
@@ -737,6 +751,62 @@ function ReceiptRow({
       )}
     </motion.div>
   );
+}
+
+/**
+ * Returns `true` while the athlete's receipt list should auto-refresh.
+ *
+ * The athlete page has no in-flight job list of its own, so we watch the
+ * on-chain events that bracket a session for this athlete — `JobRequested`
+ * (session opened) on the orchestrator and `ReceiptAppended` (receipt landed)
+ * on the SBT, both indexed by athlete. Either one opens a live window; the
+ * window closes after a quiet spell so an idle page stops polling, mirroring
+ * how `useJob` stops at a terminal state.
+ */
+function useReceiptsLive(athlete?: `0x${string}`): boolean {
+  const [live, setLive] = useState(false);
+  const orch = orchestratorAddress();
+  const sbt = sbtAddress();
+  const client = usePublicClient({ chainId: somniaTestnet.id });
+
+  useEffect(() => {
+    if (!athlete || !client) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const openWindow = () => {
+      setLive(true);
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => setLive(false), RECEIPT_LIVE_WINDOW_MS);
+    };
+    const unsubs: Array<() => void> = [];
+    if (orch) {
+      unsubs.push(
+        client.watchContractEvent({
+          address: orch,
+          abi: veloOrchestratorAbi,
+          eventName: "JobRequested",
+          args: { athlete } as never,
+          onLogs: () => openWindow(),
+        }),
+      );
+    }
+    if (sbt) {
+      unsubs.push(
+        client.watchContractEvent({
+          address: sbt,
+          abi: athleteSbtAbi,
+          eventName: "ReceiptAppended",
+          args: { athlete } as never,
+          onLogs: () => openWindow(),
+        }),
+      );
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+      unsubs.forEach((u) => u());
+    };
+  }, [athlete, orch, sbt, client]);
+
+  return live;
 }
 
 function Stat({ label, value }: { label: string; value: string }) {

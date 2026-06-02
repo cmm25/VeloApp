@@ -11,6 +11,7 @@ export type CompositionNode = {
   label?: string;
   shareBps?: number;
   receiptCid?: string;
+  receiptUrl?: string;
 };
 
 /**
@@ -56,6 +57,9 @@ export function CompositionTree({
 
 function Node({ node, inline = false }: { node: CompositionNode; inline?: boolean }) {
   const { data: ag } = useAgent(node.agent);
+  const primaryName = node.label || ag?.name || shortAddr(node.agent, 6, 4);
+  const secondaryName =
+    node.label && ag?.name && ag.name !== node.label ? ag.name : null;
   const inner = (
     <div className="flex items-center gap-3 px-3 py-2 bg-background/60 border border-border/40 rounded-sm">
       <div className="w-7 h-7 rounded-sm bg-amber/10 border border-amber/30 flex items-center justify-center shrink-0">
@@ -67,7 +71,7 @@ function Node({ node, inline = false }: { node: CompositionNode; inline?: boolea
             href={`/a/${node.agent}`}
             className="text-sm text-chalk hover:text-amber transition-colors truncate font-medium"
           >
-            {ag?.name || node.label || shortAddr(node.agent, 6, 4)}
+            {primaryName}
           </Link>
           <span
             className={`text-[10px] uppercase tracking-widest font-bold border px-1.5 py-0.5 rounded-sm ${
@@ -87,13 +91,18 @@ function Node({ node, inline = false }: { node: CompositionNode; inline?: boolea
         <div className="font-mono text-[10px] text-muted-foreground truncate">
           {shortAddr(node.agent, 6, 4)}
         </div>
+        {secondaryName && (
+          <div className="text-[10px] text-muted-foreground/80 truncate">
+            Registry: {secondaryName}
+          </div>
+        )}
       </div>
-      {node.receiptCid && !node.receiptCid.startsWith("local:") && (
+      {(node.receiptUrl || (node.receiptCid && !node.receiptCid.startsWith("local:"))) && (
         <a
-          href={ipfsGatewayUrl(node.receiptCid)}
+          href={node.receiptUrl ?? ipfsGatewayUrl(node.receiptCid!)}
           target="_blank"
           rel="noreferrer"
-          title="Receipt on IPFS"
+          title={node.receiptUrl ? "Consensus receipt on Somnia Agents" : "Receipt on IPFS"}
           className="text-muted-foreground hover:text-amber shrink-0"
         >
           <ExternalLink className="w-3.5 h-3.5" />

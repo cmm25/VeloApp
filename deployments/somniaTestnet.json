@@ -1,0 +1,17 @@
+{
+  "network": "somniaTestnet",
+  "chainId": 50312,
+  "deployedAt": "2026-05-31T17:07:16.613Z",
+  "deployer": "0xCD33c9E88539B58ED1854c54B7887d60190d7F8c",
+  "contracts": {
+    "agentRegistry": "0x935aABC7Ed1D2a56d036831Db02aE30c28739EBB",
+    "athleteSBT": "0x738550ebb0E9fE77E45a123617d165e4FE52C723",
+    "coachRegistry": "0x0a2d089908c58085FCCa307672Bc25922df184f7",
+    "veloOrchestrator": "0x2A0B15157313E81035D1f58e54da2dacd6Cfdf49",
+    "reputation": "0x0ED0ba94702CddB70eE315F2384CEaE34b37E7BB",
+    "bountyExtension": "0xC421c5b170D9837ca3529fC525C7103FB72cf81d",
+    "somniaAgentRelay": "0x7b26cb56f9260432D079045CfA61A569936d862a"
+  },
+  "minJobFee": "1000000000000000",
+  "minBountyFee": "1000000000000000"
+}

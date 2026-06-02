@@ -29,7 +29,8 @@ import {
 import { uploadVideo, ipfsGatewayUrl } from "@/lib/web3/uploader";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
 import { somniaTestnet } from "@/lib/web3/chain";
-import { useWriteContract, usePublicClient } from "wagmi";
+import { useAccount, useWriteContract, usePublicClient } from "wagmi";
+import { recordRecentJob } from "@/lib/domain/recentJobs";
 import { formatStt, shortAddr } from "@/lib/format";
 import {
   Upload,
@@ -60,6 +61,7 @@ const DEADLINE_HOURS = 24;
 export default function NewJob() {
   const [, setLocation] = useLocation();
   const searchParams = useSearch();
+  const { address: coachAddr } = useAccount();
   const { data: minFee } = useMinJobFee();
   const { writeContractAsync } = useWriteContract();
   const client = usePublicClient({ chainId: somniaTestnet.id });
@@ -88,7 +90,7 @@ export default function NewJob() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState<SuccessState | null>(null);
 
-  // ── Bounty mode ──
+  // Bounty mode
   const [mode, setMode] = useState<"direct" | "bounty">("bounty");
   const [bountyBudget, setBountyBudget] = useState<string>("");
   const [bountyDeadlineHours, setBountyDeadlineHours] = useState<number>(48);
@@ -150,7 +152,12 @@ export default function NewJob() {
         requiredSkills: skills,
         valueWei,
       });
+      toast.loading("Confirming on-chain…", { id: "bounty-confirm" });
+      if (client) {
+        await client.waitForTransactionReceipt({ hash: txHash, confirmations: 1 });
+      }
       toast.success("Bounty posted", {
+        id: "bounty-confirm",
         description: `${txHash.slice(0, 10)}…${txHash.slice(-6)}`,
       });
       setLocation("/bounties");
@@ -376,6 +383,14 @@ export default function NewJob() {
         }
       }
       if (jobId) {
+        if (coachAddr) {
+          recordRecentJob(coachAddr, {
+            jobId,
+            athlete: selected.address,
+            cid: pickedCid,
+            createdAt: Date.now(),
+          });
+        }
         setLocation(`/coach/jobs/${jobId}`);
       } else {
         setSuccess({ txHash, jobId, cid: pickedCid, isDemoCid });

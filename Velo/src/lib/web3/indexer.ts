@@ -23,11 +23,28 @@ type RawReceipt = {
   priorReceiptHash: Hex;
 };
 
+export type SomniaAgentReceiptRef = {
+  requestId: string;
+  agentId: string;
+  txHash: Hex;
+  consensusStatus: string;
+  receipt: string | null;
+  receiptUrl: string;
+};
+
+export type AiProvenance = {
+  path: "native" | "fallback";
+  agentType: "llm-inference";
+  somnia?: SomniaAgentReceiptRef;
+  fallbackReason?: string;
+};
+
 type RawEntry = {
   receipt: RawReceipt;
   signature: Hex;
   txHash: Hex;
   blockNumber: string;
+  provenance?: AiProvenance | null;
 };
 
 type RawResponse = {
@@ -43,6 +60,7 @@ export type IndexedEntry = {
   signature: Hex;
   txHash: Hex;
   blockNumber: bigint;
+  provenance: AiProvenance | null;
 };
 
 export type IndexedReceipts = {
@@ -70,6 +88,7 @@ function hydrate(entry: RawEntry | null): IndexedEntry | null {
     signature: entry.signature,
     txHash: entry.txHash,
     blockNumber: BigInt(entry.blockNumber),
+    provenance: entry.provenance ?? null,
   };
 }
 

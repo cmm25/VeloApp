@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
+import { FullPageLoader } from "@/components/ui/spinner";
 import { shortAddr } from "@/lib/format";
 import { useMyOnChainRole } from "@/lib/domain/onchainRole";
 import {
@@ -41,11 +42,17 @@ const ROLES: RoleOption[] = [
 export default function ChooseRole() {
   const { address } = useAccount();
   const [, setLocation] = useLocation();
-  const { role: currentRole, refetch } = useMyOnChainRole();
+  const { role: currentRole, isLoading: roleLoading, refetch } = useMyOnChainRole();
   const pub = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const [pending, setPending] = useState<Role | null>(null);
   const [coachName, setCoachName] = useState<string>("");
+
+  // Hold the screen while the chain query is in-flight — prevents the "Choose
+  // a role" UI flashing for accounts that already have an established role.
+  if (roleLoading) {
+    return <FullPageLoader label="Reading on-chain role…" />;
+  }
 
   // If they already have a role, send them to their home.
   if (currentRole) {

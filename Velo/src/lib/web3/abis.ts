@@ -1450,6 +1450,13 @@ export const bountyExtensionAbi = [
   },
   {
     type: "function",
+    name: "nextBountyId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "getBounty",
     stateMutability: "view",
     inputs: [{ name: "bountyId", type: "uint256" }],
@@ -1606,5 +1613,59 @@ export const bountyExtensionAbi = [
       { name: "amount", type: "uint256", indexed: false },
     ],
   },
+  { type: "error", name: "ZeroAddress", inputs: [] },
+  { type: "error", name: "FeeBelowMin", inputs: [{ name: "sent", type: "uint256" }] },
+  { type: "error", name: "DeadlinePassed", inputs: [] },
+  { type: "error", name: "BountyNotFound", inputs: [] },
+  { type: "error", name: "BountyNotOpen", inputs: [] },
+  { type: "error", name: "BountyNotAccepted", inputs: [] },
+  { type: "error", name: "NotPoster", inputs: [] },
+  { type: "error", name: "NotLeadAgent", inputs: [] },
+  {
+    type: "error",
+    name: "AgentNotRegistered",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  {
+    type: "error",
+    name: "AgentMissingSkill",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  { type: "error", name: "BidNotFound", inputs: [] },
+  { type: "error", name: "DeadlineNotReached", inputs: [] },
+  { type: "error", name: "EmptyEscrow", inputs: [] },
+  { type: "error", name: "TransferFailed", inputs: [] },
+  {
+    type: "error",
+    name: "SplitsOverflow",
+    inputs: [{ name: "totalBps", type: "uint256" }],
+  },
+  {
+    type: "error",
+    name: "UnknownSplitRecipient",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  {
+    type: "error",
+    name: "DuplicateSplitRecipient",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  {
+    type: "error",
+    name: "SplitMissingReceipt",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  { type: "error", name: "ReceiptJobIdMismatch", inputs: [] },
+  {
+    type: "error",
+    name: "AgentAlreadySettled",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  {
+    type: "error",
+    name: "ReceiptAgentNotInJob",
+    inputs: [{ name: "agent", type: "address" }],
+  },
+  { type: "error", name: "NoSubAgents", inputs: [] },
 ] as const;
 
