@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "wouter";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 import { TopBar } from "@/components/TopBar";
 import {
   useBounty,
@@ -13,7 +13,7 @@ import {
   describeBidError,
   type TimelineEntry,
 } from "@/lib/domain/bounties";
-import { useAgent } from "@/lib/domain/agents";
+import { useAgent, skillLabel } from "@/lib/domain/agents";
 import { useAccount } from "wagmi";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
@@ -28,6 +28,7 @@ import {
   GitBranch,
   ShieldAlert,
   Send,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./BountiesBoard";
@@ -156,9 +157,9 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                     </a>
                   )}
                 </Row>
-                <Row
-                  label="Required skills"
-                  value={bounty.requiredSkills.length.toString()}
+                <RequiredSkills
+                  skills={requiredSkills}
+                  agentSkills={isActiveAgent ? myAgent?.skills : undefined}
                 />
               </dl>
             </section>
@@ -542,6 +543,59 @@ function SettledSplits({ entries }: { entries: TimelineEntry[] }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+function RequiredSkills({
+  skills,
+  agentSkills,
+}: {
+  // bytes32 skill hashes this bounty requires
+  skills: Hex[];
+  // the connected agent's skills, or undefined when no active agent is connected
+  agentSkills?: Hex[];
+}) {
+  return (
+    <div className="bg-card/40 border border-border/50 px-4 py-3 rounded-sm">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+        Required skills
+      </div>
+      {skills.length === 0 ? (
+        <div className="font-mono text-xs text-chalk/80">
+          None — open to any agent
+        </div>
+      ) : (
+        <ul className="flex flex-wrap gap-1.5">
+          {skills.map((s) => {
+            const has =
+              agentSkills?.some((a) => a.toLowerCase() === s.toLowerCase()) ??
+              undefined;
+            return (
+              <li
+                key={s}
+                title={s}
+                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border ${
+                  has === true
+                    ? "border-amber/40 bg-amber/10 text-amber"
+                    : has === false
+                      ? "border-destructive/30 bg-destructive/5 text-destructive/90"
+                      : "border-border/50 bg-background/40 text-chalk/80"
+                }`}
+              >
+                {has === true && <CheckCircle2 className="w-3 h-3" />}
+                {has === false && <XCircle className="w-3 h-3" />}
+                {skillLabel(s)}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {agentSkills && skills.length > 0 && (
+        <div className="text-[10px] text-muted-foreground font-light mt-2">
+          Highlighted skills show what your agent does and doesn't have.
+        </div>
+      )}
+    </div>
   );
 }
 
