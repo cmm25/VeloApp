@@ -1,68 +1,145 @@
 # Velo
 
-Autonomous AI tennis coaching on the [Somnia](https://somnia.network) blockchain.
+**A verifiable training record for tennis — maintained by autonomous agents on [Somnia](https://somnia.network).**
 
-A coach posts a match tape; two autonomous agents — a **Form Analyst** and a
-**Prescriber** — analyze it, reason about technique, and write signed coaching
-receipts on-chain. Athletes own their tape library and a soulbound identity, and
-every analysis is verifiable.
+Coaches commission analysis of match tape. Two specialized agents run in sequence: one interprets movement from video, the other produces a training prescription. Each step yields a signed, on-chain receipt. The athlete holds a permanent, non-transferable history of coaching work — portable and auditable, not locked inside one app.
+
+---
+
+## The idea
+
+Tennis coaching today is fragmented: notes in chats, clips in camera rolls, advice that is hard to prove or replay later. Velo treats coaching output like **evidence**: who analyzed what, what they concluded, and how it connects to prior sessions.
+
+**Coaches** pay to submit a job (video + fee in escrow). **Athletes** own their tape library and on-chain identity. **Agents** do the analysis work and earn fees when their receipts are accepted. The **chain** is the source of truth for job state, payments, and receipt composition — the UI is a window onto that truth.
+
+Once a coach submits a job, the system is designed so **no human must orchestrate the pipeline**. An always-on runner listens for Somnia events and advances the workflow from form analysis through prescription and settlement.
+
+---
 
 ## Architecture
 
-| Component | Path | Stack | Port |
-|-----------|------|-------|------|
-| Frontend | `Velo/` | React + Vite, wouter, wagmi/viem | 5173 (dev) |
-| Agent runner + API | `lib/velo-agents/` | TypeScript, Express, ethers | 3001 |
-| Vision engine | `lib/velo-engine/` | Python, FastAPI, MediaPipe | 8000 |
-| Smart contracts | `Hardhat/` | Solidity, Hardhat (chainId 50312) | — |
+Velo splits into four layers: people interact through a web app; **smart contracts** on Somnia define jobs, escrow, and history; an **agent runner** reacts to chain events; **supporting services** supply vision, reasoning, and content storage.
 
-The frontend calls `/api/*`, which the agent runner serves. The runner also
-watches Somnia, runs the agents, and writes receipts. The vision engine and
-Supabase are both optional (see below).
+### System layers
 
-## Prerequisites
+```mermaid
+flowchart TB
+  subgraph people["People"]
+    Coach["Coach"]
+    Athlete["Athlete"]
+  end
 
-- Node.js 20+
-- Python 3.10+ (only if you run the vision engine)
-- A wallet funded with Somnia testnet STT (for on-chain runs)
+  subgraph app["Presentation — Velo web app"]
+    UI["Wallet · tapes · pay job · jobs & receipts · agents · bounties"]
+  end
 
-## Run locally
+  subgraph chain["Somnia — on-chain"]
+    Orch["VeloOrchestrator + JobEscrow"]
+    SBT["AthleteSBT — soulbound session history"]
+    Registry["AgentRegistry · CoachRegistry · Reputation · Bounties"]
+    Relay["VeloAgentRelay — Somnia LLM callback capture"]
+  end
 
-Run each part from the repo root in its own terminal.
+  subgraph runner["Agent runner — event-driven"]
+    Pipeline["Form Analyst → Prescriber"]
+  end
 
-```bash
-# 1. Agent runner + API (http://localhost:3001)
-cd lib/velo-agents
-cp .env.example .env        # fill in the values
-npm install
-VISION_MODE=mock npm run dev # mock = skip the Python engine
+  subgraph services["Off-chain services"]
+    Engine["velo-engine — pose / biomechanics telemetry"]
+    LLM["Somnia LLM Inference (+ fallback providers)"]
+    IPFS["IPFS — reports & prescriptions"]
+  end
 
-# 2. Frontend (http://localhost:5173)
-cd Velo
-npm install
-npm run dev
+  Coach --> UI
+  Athlete --> UI
+  UI -->|"transactions & reads"| Orch
+  UI --> Registry
+  Orch <-->|"events · submit receipts"| Pipeline
+  Pipeline --> Engine
+  Pipeline --> LLM
+  Pipeline --> Relay
+  Pipeline --> IPFS
+  Pipeline -->|"signed receipts"| Orch
+  Orch --> SBT
 ```
 
-Minimum `.env` for a local demo: `API_SECRET` and `VISION_MODE=mock`. For a real
-on-chain run also set `ORCHESTRATOR_ADDRESS`, `AGENT_FORM_PRIVATE_KEY`,
-`AGENT_PRESCRIBER_PRIVATE_KEY`, and one AI key (`GROQ_API_KEY`). See
-`lib/velo-agents/.env.example` for the full list.
+| Layer | Responsibility |
+|-------|----------------|
+| **Web app** | Roles (coach / athlete), uploads, job creation, reading on-chain state and provenance |
+| **Contracts** | Job lifecycle, STT escrow, EIP-712 receipt verification, agent registry, reputation, bounties |
+| **Agent runner** | Subscribes to `JobRequested` and `FormReceiptSubmitted`; runs both agents; indexes receipts for the API |
+| **velo-engine** | Video in → structured tennis telemetry (joint angles, stroke phases) out |
+| **Reasoning** | LLM turns telemetry (Form) or prior receipt (Prescriber) into structured reports; Somnia native agents when enabled |
+| **IPFS** | Full JSON payloads; chain stores CIDs and summaries |
 
-## Deploy
+### Agent pipeline
 
-The frontend is hosted on Vercel and the contracts are on Somnia testnet. To make
-the full app work in production you deploy the agent runner and point the frontend
-at it. See **[docs/DEPLOY.md](docs/DEPLOY.md)** for the step-by-step guide.
+Work advances by **chain events**, not by API calls from the UI. The Prescriber never trusts the Form output from memory alone — it reads the form receipt **from chain** and chains its own receipt with `priorReceiptHash`.
 
-## Off-chain storage (Supabase)
+```mermaid
+flowchart TB
+  START(["Coach submits job<br/>video CID on IPFS · fee in escrow"])
 
-Supabase is **optional**. Without it, the runner keeps off-chain data (receipts,
-tapes, roster, athlete names) in memory — fine for demos, but lost when the
-process restarts. For a persistent deployment, run `docs/supabase-schema.sql` in
-Supabase and set `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` on the runner. Details
-in [docs/DEPLOY.md](docs/DEPLOY.md).
+  START --> E1
 
-## Smart contracts
+  E1["Event: JobRequested"]
+  E1 --> F1
 
-Deployed to Somnia testnet (chainId **50312**). See `Hardhat/` for sources,
-deploy scripts, and the contract addresses the runner and frontend consume.
+  subgraph form["Form Analyst agent"]
+    direction TB
+    F1["Fetch video from IPFS"]
+    F2["velo-engine — MediaPipe pose analysis<br/>telemetry: angles, phases, dominant stroke"]
+    F3["LLM — structured form report from telemetry"]
+    F4["Pin report to IPFS"]
+    F5["EIP-712 sign → submitFormReceipt"]
+    F1 --> F2 --> F3 --> F4 --> F5
+  end
+
+  F5 --> E2
+
+  E2["Event: FormReceiptSubmitted"]
+  E2 --> P1
+
+  subgraph rx["Prescriber agent"]
+    direction TB
+    P1["Read form receipt on-chain"]
+    P2["LLM — prescription linked via priorReceiptHash"]
+    P3["Pin prescription to IPFS"]
+    P4["EIP-712 sign → submitPrescription"]
+    P1 --> P2 --> P3 --> P4
+  end
+
+  P4 --> END
+
+  END(["Escrow settles · AthleteSBT appended<br/>UI shows receipt composition & provenance"])
+```
+
+| Phase | Agent | Inputs | Outputs |
+|-------|-------|--------|---------|
+| **Form** | Form Analyst | Video CID, on-chain job | Telemetry → form report → IPFS CID → signed form receipt |
+| **Prescriber** | Prescriber | Form receipt on-chain | Prescription report → IPFS CID → signed rx receipt (chained to form) |
+| **Settlement** | Contracts | Both receipts valid | Agent payouts; athlete soulbound record updated |
+
+### Why two agents (composition)
+
+A single monolithic “coach bot” would blur **observation** and **prescription**. Velo separates them so each receipt type has a clear role, fee split, and on-chain type. The Prescriber’s receipt cryptographically references the Form receipt, so third parties can verify the pipeline was followed — not just read a final paragraph of advice.
+
+### Somnia agent-native design
+
+- **Events as triggers** — `JobRequested` and `FormReceiptSubmitted` are the only handoffs between human action and autonomous work.
+- **On-chain agent registry** — Agents advertise skills, fees, and endpoints; others can discover them without a central operator list.
+- **Somnia LLM via relay** — Native inference returns results only to an on-chain callback; `VeloAgentRelay` captures consensus output as durable logs the runner can read.
+- **Receipts + escrow** — Typed EIP-712 signatures, pull payments, reputation updates, and an optional bounty marketplace for open agent work.
+
+---
+
+## Repository layout
+
+| Part | Folder | Purpose |
+|------|--------|---------|
+| Web app | [`Velo/`](Velo/) | Frontend: wallets, coach/athlete flows, jobs, composition tree, provenance |
+| Agent runner | [`lib/velo-agents/`](lib/velo-agents/) | Chain watcher, Form/Prescriber pipeline, REST API for the app |
+| Vision engine | [`lib/velo-engine/`](lib/velo-engine/) | MediaPipe-based video analysis → `TennisTelemetry` JSON |
+| Smart contracts | [`Hardhat/`](Hardhat/) | Orchestrator, SBT, registries, reputation, bounties, agent relay |
+
+
