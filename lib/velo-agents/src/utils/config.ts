@@ -111,7 +111,8 @@ export const config = {
   },
 
   api: {
-    port: optionalInt("API_PORT", 3001),
+    // Hosts like Koyeb/Render inject $PORT; fall back to API_PORT, then 3001.
+    port: optionalInt("PORT", optionalInt("API_PORT", 3001)),
     secret: optional("API_SECRET", "velo-dev-secret"),
     sessionTtl: optionalInt("SESSION_TTL", 3600),
   },

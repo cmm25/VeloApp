@@ -32,7 +32,8 @@ export async function signReceipt(
   orchestratorAddress: string
 ): Promise<string> {
   const domain = buildDomain(orchestratorAddress);
-  return signer.signTypedData(domain, RECEIPT_TYPES, receipt);
+  const types = RECEIPT_TYPES as unknown as Record<string, ethers.TypedDataField[]>;
+  return signer.signTypedData(domain, types, receipt);
 }
 
 /**

@@ -14,7 +14,7 @@ const router = Router();
  * Response shape mirrors the RawResponse type in Velo/src/lib/web3/indexer.ts
  */
 router.get("/:jobId", async (req: Request, res: Response) => {
-  const { jobId } = req.params;
+  const jobId = String(req.params.jobId ?? "");
 
   if (!jobId || !jobId.startsWith("0x")) {
     res.status(400).json({ error: "Invalid jobId — must be a 0x-prefixed bytes32 hex" });
