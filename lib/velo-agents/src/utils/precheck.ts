@@ -20,6 +20,20 @@ function warn(label: string, detail?: string): void {
   results.push({ label, ok: true, warn: true, detail });
 }
 
+function parseJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const normalized = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Config checks
 check("ORCHESTRATOR_ADDRESS set", !!config.contracts.orchestrator, config.contracts.orchestrator || "MISSING");
 check("AGENT_FORM_PRIVATE_KEY set", !!config.agents.formPrivateKey);
@@ -104,8 +118,61 @@ async function checkVisionEngine() {
   }
 }
 
+// Supabase schema wiring
+async function checkSupabase() {
+  if (!config.supabase.url || !config.supabase.serviceKey) {
+    warn("Supabase not configured — using in-memory API store");
+    return;
+  }
+
+  check("SUPABASE_URL set", true, config.supabase.url);
+  check("SUPABASE_SERVICE_KEY set", true);
+  const payload = parseJwtPayload(config.supabase.serviceKey);
+  if (!payload) {
+    warn("SUPABASE_SERVICE_KEY format", "Could not decode JWT payload to verify role");
+  } else {
+    const role = String(payload["role"] ?? "");
+    check(
+      "SUPABASE key role is service_role",
+      role === "service_role",
+      role || "missing role claim"
+    );
+  }
+
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const supabase = createClient(config.supabase.url, config.supabase.serviceKey);
+
+    const expectedTables = [
+      "receipts",
+      "jobs",
+      "athletes",
+      "tapes",
+      "roster",
+      "telemetry",
+      "agent_runs",
+      "upload_sessions",
+    ] as const;
+
+    for (const table of expectedTables) {
+      const { error } = await supabase.from(table).select("*", { head: true, count: "exact" });
+      check(
+        `Supabase table exists: ${table}`,
+        !error,
+        error ? (error.message ?? String(error)) : "ok"
+      );
+    }
+  } catch (err) {
+    check(
+      "Supabase client available",
+      false,
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+}
+
 async function run() {
-  await Promise.all([checkChain(), checkBalances(), checkVisionEngine()]);
+  await Promise.all([checkChain(), checkBalances(), checkVisionEngine(), checkSupabase()]);
 
   console.log("\nVelo Agent Runner — Pre-flight Check\n");
   let allOk = true;

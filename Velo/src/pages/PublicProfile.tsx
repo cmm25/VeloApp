@@ -12,7 +12,7 @@ import { CompositionTree, type CompositionNode } from "@/components/CompositionT
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import { useTapes, formatTapeSize, formatTapeDate } from "@/lib/domain/tapes";
 import { useCoachesForAthlete } from "@/lib/domain/roster";
-import { useIpfsJson, summaryFromReport } from "@/lib/web3/ipfs";
+import { useIpfsJson, summaryFromReport, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
 import { shortAddr, shortHash } from "@/lib/format";
 import { EmptyState, CardSkeletonList } from "@/components/ui/states";
@@ -227,9 +227,16 @@ export default function PublicProfile({ address: addrParam }: { address: string 
 function PublicReceiptRow({ r }: { r: SbtReceiptRef }) {
   const { data: ipfs, isLoading } = useIpfsJson(r.ipfsCid);
   const summary = summaryFromReport(ipfs);
+  const somniaReceiptUrl = somniaReceiptUrlFromJson(ipfs);
   const compositionNodes: CompositionNode[] = [
     { role: "lead", agent: r.formAgent, label: "Form agent", receiptCid: r.ipfsCid },
-    { role: "sub", agent: r.prescriptionAgent, label: "Prescriber", receiptCid: r.ipfsCid },
+    {
+      role: "sub",
+      agent: r.prescriptionAgent,
+      label: "Prescriber",
+      receiptCid: r.ipfsCid,
+      receiptUrl: somniaReceiptUrl ?? undefined,
+    },
   ];
   return (
     <div className="p-6 bg-card border border-border/50 rounded-sm">
@@ -280,14 +287,14 @@ function PublicReceiptRow({ r }: { r: SbtReceiptRef }) {
             </div>
             <div className="font-mono text-xs text-chalk/60">{shortHash(r.summaryHash)}</div>
           </div>
-          {r.ipfsCid && !r.ipfsCid.startsWith("local:") && (
+          {(somniaReceiptUrl || (r.ipfsCid && !r.ipfsCid.startsWith("local:"))) && (
             <a
-              href={ipfsGatewayUrl(r.ipfsCid)}
+              href={somniaReceiptUrl ?? ipfsGatewayUrl(r.ipfsCid)}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1.5 text-xs font-medium text-amber hover:text-amber-soft"
             >
-              Raw JSON <ExternalLink className="w-3 h-3" />
+              {somniaReceiptUrl ? "Somnia Receipt" : "Raw JSON"} <ExternalLink className="w-3 h-3" />
             </a>
           )}
         </div>
