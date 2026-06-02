@@ -1,0 +1,66 @@
+import express from "express";
+import cors from "cors";
+import { config } from "../utils/config.js";
+import { makeLogger } from "../utils/logger.js";
+import healthRouter from "./routes/health.js";
+import authRouter from "./routes/auth.js";
+import pinataRouter from "./routes/pinata.js";
+import receiptsRouter from "./routes/receipts.js";
+import tapesRouter from "./routes/tapes.js";
+import athletesRouter from "./routes/athletes.js";
+import rosterRouter from "./routes/roster.js";
+import meRouter from "./routes/me.js";
+
+const log = makeLogger("api");
+
+export function createServer() {
+  const app = express();
+
+  app.use(cors({ origin: "*" }));
+  app.use(express.json({ limit: "1mb" }));
+
+  app.use("/api", healthRouter);
+  app.use("/api/auth", authRouter);
+  app.use("/api/pinata", pinataRouter);
+  app.use("/api/receipts", receiptsRouter);
+  app.use("/api/tapes", tapesRouter);
+  app.use("/api/athletes", athletesRouter);
+  app.use("/api/roster", rosterRouter);
+  app.use("/api/me", meRouter);
+
+  app.use((_req, res) => {
+    res.status(404).json({ error: "Not found" });
+  });
+
+  return app;
+}
+
+export function startServer(): Promise<void> {
+  return new Promise((resolve) => {
+    const app = createServer();
+    app.listen(config.api.port, () => {
+      log.info(`API server listening on port ${config.api.port}`);
+      log.info(`  GET  /api/healthz`);
+      log.info(`  GET  /api/auth/nonce`);
+      log.info(`  POST /api/auth/verify`);
+      log.info(`  POST /api/pinata/sign-upload`);
+      log.info(`  GET  /api/receipts/:jobId`);
+      log.info(`  GET  /api/tapes/:address`);
+      log.info(`  POST /api/tapes`);
+      log.info(`  DEL  /api/tapes/:id`);
+      log.info(`  GET  /api/athletes`);
+      log.info(`  PUT  /api/athletes/:address`);
+      log.info(`  POST /api/athletes/verify-claim`);
+      log.info(`  GET  /api/roster`);
+      log.info(`  POST /api/roster`);
+      log.info(`  DEL  /api/roster/:address`);
+      log.info(`  GET  /api/roster/pending`);
+      log.info(`  GET  /api/roster/coaches/:address`);
+      log.info(`  GET  /api/me/coaches`);
+      log.info(`  GET  /api/me/roster-requests`);
+      log.info(`  POST /api/me/roster-requests/:id/accept`);
+      log.info(`  POST /api/me/roster-requests/:id/decline`);
+      resolve();
+    });
+  });
+}

@@ -6,17 +6,18 @@ import * as dotenv from "dotenv";
 dotenv.config();
 
 // ── account keys (filter out any missing/malformed) ───────────────────────────
-const DEPLOYER_KEY = process.env.DEPLOYER_PRIVATE_KEY;
-const COACH_KEY = process.env.COACH_PRIVATE_KEY;
-const AGENT_FORM_KEY = process.env.AGENT_FORM_PRIVATE_KEY;
-const AGENT_PRESCRIBER_KEY = process.env.AGENT_PRESCRIBER_PRIVATE_KEY;
+function normalizePrivateKey(raw: string | undefined): string | undefined {
+  if (!raw || typeof raw !== "string") return undefined;
+  const key = raw.startsWith("0x") ? raw : `0x${raw}`;
+  return /^0x[0-9a-fA-F]{64}$/.test(key) ? key : undefined;
+}
 
 const accounts: string[] = [
-  DEPLOYER_KEY,
-  COACH_KEY,
-  AGENT_FORM_KEY,
-  AGENT_PRESCRIBER_KEY,
-].filter((k): k is string => typeof k === "string" && k.length === 66);
+  normalizePrivateKey(process.env.DEPLOYER_PRIVATE_KEY),
+  normalizePrivateKey(process.env.COACH_PRIVATE_KEY),
+  normalizePrivateKey(process.env.AGENT_FORM_PRIVATE_KEY),
+  normalizePrivateKey(process.env.AGENT_PRESCRIBER_PRIVATE_KEY),
+].filter((k): k is string => Boolean(k));
 
 const SOMNIA_TESTNET_RPC =
   process.env.SOMNIA_TESTNET_RPC ?? "https://dream-rpc.somnia.network";

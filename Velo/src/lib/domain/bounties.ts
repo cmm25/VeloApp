@@ -7,10 +7,18 @@ import {
   useWatchContractEvent,
 } from "wagmi";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { parseEther, type Address, type Hex } from "viem";
+import {
+  parseEther,
+  BaseError,
+  ContractFunctionRevertedError,
+  type Address,
+  type Hex,
+  type AbiEvent,
+} from "viem";
 import { bountyExtensionAbi } from "@/lib/web3/abis";
 import { bountyExtensionAddress } from "@/hooks/useVeloContracts";
 import { somniaTestnet } from "@/lib/web3/chain";
+import { getLogsChunked, recentRangeForTimestamp } from "@/lib/web3/logs";
 
 export type BountyStatus = "None" | "Open" | "Accepted" | "Settled" | "Expired";
 
@@ -64,31 +72,29 @@ function decodeBounty(id: bigint, raw: unknown): Bounty | null {
   };
 }
 
-/** Open bounties + recently-touched ones, derived from BountyPosted logs. */
+/**
+ * Every bounty, enumerated via the on-chain `nextBountyId` counter.
+ *
+ * Bounties are sequential — `BountyExtension` assigns `bountyId = nextBountyId++`
+ * starting at 1 — so the full set is `[1, nextBountyId)`. We read the counter and
+ * multicall `getBounty(id)` for each, which sidesteps `eth_getLogs` entirely (and
+ * thus Somnia's 1000-block scan cap that made a `fromBlock: 0` log scan fail
+ * outright). `decodeBounty` keeps anything with a real status; the "None" filter
+ * drops ids that somehow don't resolve.
+ */
 export function useOpenBounties() {
-  const client = usePublicClient({ chainId: somniaTestnet.id });
   const ext = bountyExtensionAddress();
-  const idsQ = useQuery({
-    queryKey: ["velo:bounty:ids", ext],
-    enabled: !!client && !!ext,
-    staleTime: 15_000,
-    queryFn: async () => {
-      const event = bountyExtensionAbi.find(
-        (x) => x.type === "event" && x.name === "BountyPosted",
-      );
-      if (!event) return [] as bigint[];
-      const logs = await client!.getLogs({
-        address: ext!,
-        event: event as never,
-        fromBlock: 0n,
-        toBlock: "latest",
-      });
-      return logs.map(
-        (l) => (l as unknown as { args: { bountyId: bigint } }).args.bountyId,
-      );
-    },
+  const countQ = useReadContract({
+    address: ext ?? undefined,
+    abi: bountyExtensionAbi,
+    functionName: "nextBountyId",
+    query: { enabled: !!ext, staleTime: 0, refetchOnMount: true },
   });
-  const ids = idsQ.data ?? [];
+  const next = countQ.data ? Number(countQ.data as bigint) : 0;
+  const ids = useMemo<bigint[]>(
+    () => (next > 1 ? Array.from({ length: next - 1 }, (_, i) => BigInt(i + 1)) : []),
+    [next],
+  );
   const detailsQ = useReadContracts({
     contracts: ids.map((id) => ({
       address: ext!,
@@ -113,9 +119,11 @@ export function useOpenBounties() {
   }, [detailsQ.data, ids]);
   return {
     bounties,
-    isLoading: idsQ.isLoading || detailsQ.isLoading,
+    isLoading: countQ.isLoading || (ids.length > 0 && detailsQ.isLoading),
+    isError: countQ.isError,
+    error: countQ.error,
     refetch: () => {
-      idsQ.refetch();
+      countQ.refetch();
       detailsQ.refetch();
     },
   };
@@ -176,29 +184,47 @@ export function useSubAgents(id?: bigint) {
 }
 
 export type TimelineEntry =
-  | { kind: "BountyPosted"; blockNumber: bigint; data: { escrow: bigint; deadline: bigint } }
+  // `ts` is unix seconds (0 when the exact moment isn't recoverable from state);
+  // `seq` orders lifecycle phases when timestamps tie or are unknown.
+  | { kind: "BountyPosted"; ts: number; seq: number; data: { escrow: bigint; deadline: bigint } }
   | {
       kind: "BidPlaced";
-      blockNumber: bigint;
+      ts: number;
+      seq: number;
       data: { bidId: bigint; agent: Address; proposedFee: bigint };
     }
   | {
       kind: "BidAccepted";
-      blockNumber: bigint;
+      ts: number;
+      seq: number;
       data: { bidId: bigint; leadAgent: Address; acceptedFee: bigint };
     }
-  | { kind: "JobStarted"; blockNumber: bigint; data: { leadAgent: Address; deadline: bigint } }
-  | { kind: "SubContracted"; blockNumber: bigint; data: { subAgent: Address } }
+  | { kind: "JobStarted"; ts: number; seq: number; data: { leadAgent: Address; deadline: bigint } }
+  | { kind: "SubContracted"; ts: number; seq: number; data: { subAgent: Address } }
   | {
       kind: "Settled";
-      blockNumber: bigint;
+      ts: number;
+      seq: number;
       data: { totalPaid: bigint; splits: { agent: Address; bps: number }[] };
     }
-  | { kind: "BountyExpired"; blockNumber: bigint; data: { refund: bigint } };
+  | { kind: "BountyExpired"; ts: number; seq: number; data: { refund: bigint } };
+
+type SettledLog = {
+  blockNumber: bigint;
+  args: { totalPaid?: bigint; splits?: unknown[] };
+};
 
 /**
- * Watch every BountyExtension event filtered to `id` and merge into a sorted
- * timeline. Returns an empty list while loading.
+ * Reconstruct a bounty's lifecycle timeline from on-chain *state* rather than a
+ * full-history event scan (impossible on Somnia, which caps `eth_getLogs` at
+ * 1000-block windows).
+ *
+ * `getBounty` + `getBids` + `getSubAgents` already capture everything except the
+ * exact payout splits, which only exist in the `Settled` event. For settled
+ * bounties we do a *bounded* recent scan (windowed to the bounty's lifetime via
+ * `recentRangeForTimestamp`) to recover the real splits; if that window is too
+ * old to reach the event we still emit a Settled entry with the accepted fee so
+ * the timeline degrades gracefully instead of going blank.
  */
 export function useBountyTimeline(id?: bigint) {
   const client = usePublicClient({ chainId: somniaTestnet.id });
@@ -211,108 +237,137 @@ export function useBountyTimeline(id?: bigint) {
     enabled: !!client && !!ext && id !== undefined,
     staleTime: 5_000,
     queryFn: async () => {
+      const c = client!;
+      const address = ext!;
+      const bountyId = id!;
+
+      const [rawBounty, rawBids, rawSubs] = await Promise.all([
+        c.readContract({ address, abi: bountyExtensionAbi, functionName: "getBounty", args: [bountyId] }),
+        c.readContract({ address, abi: bountyExtensionAbi, functionName: "getBids", args: [bountyId] }),
+        c.readContract({ address, abi: bountyExtensionAbi, functionName: "getSubAgents", args: [bountyId] }),
+      ]);
+
+      const bounty = decodeBounty(bountyId, rawBounty);
+      if (!bounty || bounty.status === "None") return [] as TimelineEntry[];
+
+      const bids: Bid[] = Array.isArray(rawBids)
+        ? (rawBids as unknown[]).map((r, i) => {
+            const x = r as Record<string, unknown>;
+            return {
+              bidId: BigInt(i),
+              agent: x.agent as Address,
+              proposedFee: (x.proposedFee as bigint) ?? 0n,
+              proposedDeadline: (x.proposedDeadline as bigint) ?? 0n,
+              placedAt: (x.placedAt as bigint) ?? 0n,
+            };
+          })
+        : [];
+      const subs: Address[] = Array.isArray(rawSubs) ? (rawSubs as Address[]) : [];
+
       const out: TimelineEntry[] = [];
-      const names = [
-        "BountyPosted",
-        "BidPlaced",
-        "BidAccepted",
-        "JobStarted",
-        "SubContracted",
-        "Settled",
-        "BountyExpired",
-      ] as const;
-      for (const name of names) {
-        const event = bountyExtensionAbi.find(
-          (x) => x.type === "event" && x.name === name,
-        );
-        if (!event) continue;
-        const logs = await client!.getLogs({
-          address: ext!,
-          event: event as never,
-          args: { bountyId: id } as never,
-          fromBlock: 0n,
-          toBlock: "latest",
+
+      out.push({
+        kind: "BountyPosted",
+        ts: Number(bounty.createdAt),
+        seq: 0,
+        data: { escrow: bounty.escrow, deadline: bounty.deadline },
+      });
+
+      for (const b of bids) {
+        out.push({
+          kind: "BidPlaced",
+          ts: Number(b.placedAt),
+          seq: 1,
+          data: { bidId: b.bidId, agent: b.agent, proposedFee: b.proposedFee },
         });
-        for (const raw of logs) {
-          const l = raw as unknown as { args: Record<string, unknown>; blockNumber: bigint };
-          const args = l.args;
-          switch (name) {
-            case "BountyPosted":
-              out.push({
-                kind: "BountyPosted",
-                blockNumber: l.blockNumber!,
-                data: {
-                  escrow: args.escrow as bigint,
-                  deadline: args.deadline as bigint,
-                },
-              });
-              break;
-            case "BidPlaced":
-              out.push({
-                kind: "BidPlaced",
-                blockNumber: l.blockNumber!,
-                data: {
-                  bidId: args.bidId as bigint,
-                  agent: args.agent as Address,
-                  proposedFee: args.proposedFee as bigint,
-                },
-              });
-              break;
-            case "BidAccepted":
-              out.push({
-                kind: "BidAccepted",
-                blockNumber: l.blockNumber!,
-                data: {
-                  bidId: args.bidId as bigint,
-                  leadAgent: args.leadAgent as Address,
-                  acceptedFee: args.acceptedFee as bigint,
-                },
-              });
-              break;
-            case "JobStarted":
-              out.push({
-                kind: "JobStarted",
-                blockNumber: l.blockNumber!,
-                data: {
-                  leadAgent: args.leadAgent as Address,
-                  deadline: args.deadline as bigint,
-                },
-              });
-              break;
-            case "SubContracted":
-              out.push({
-                kind: "SubContracted",
-                blockNumber: l.blockNumber!,
-                data: { subAgent: args.subAgent as Address },
-              });
-              break;
-            case "Settled":
-              out.push({
-                kind: "Settled",
-                blockNumber: l.blockNumber!,
-                data: {
-                  totalPaid: args.totalPaid as bigint,
-                  splits: ((args.splits as unknown[]) ?? []).map((s) => {
-                    const x = s as Record<string, unknown>;
-                    return {
-                      agent: x.agent as Address,
-                      bps: Number(x.bps ?? 0),
-                    };
-                  }),
-                },
-              });
-              break;
-            case "BountyExpired":
-              out.push({
-                kind: "BountyExpired",
-                blockNumber: l.blockNumber!,
-                data: { refund: args.refund as bigint },
-              });
-              break;
-          }
-        }
       }
-      out.sort((a, b) => Number(a.blockNumber - b.blockNumber));
+
+      const ZERO = "0x0000000000000000000000000000000000000000";
+      const hasLead =
+        !!bounty.leadAgent && bounty.leadAgent.toLowerCase() !== ZERO;
+      const leadBid = hasLead
+        ? bids.find((b) => b.agent.toLowerCase() === bounty.leadAgent.toLowerCase())
+        : undefined;
+
+      if (hasLead && (bounty.status === "Accepted" || bounty.status === "Settled")) {
+        out.push({
+          kind: "BidAccepted",
+          ts: leadBid ? Number(leadBid.placedAt) : 0,
+          seq: 2,
+          data: {
+            bidId: leadBid?.bidId ?? 0n,
+            leadAgent: bounty.leadAgent,
+            acceptedFee: bounty.acceptedFee,
+          },
+        });
+      }
+
+      for (const sub of subs) {
+        out.push({ kind: "SubContracted", ts: 0, seq: 3, data: { subAgent: sub } });
+      }
+
+      if (bounty.status === "Settled") {
+        let settled: { ts: number; totalPaid: bigint; splits: { agent: Address; bps: number }[] } | null =
+          null;
+        try {
+          const event = bountyExtensionAbi.find(
+            (x) => x.type === "event" && x.name === "Settled",
+          );
+          if (event) {
+            const { fromBlock, toBlock } = await recentRangeForTimestamp(
+              c,
+              bounty.createdAt,
+            );
+            const logs = (await getLogsChunked(c, {
+              address,
+              event: event as AbiEvent,
+              args: { bountyId },
+              fromBlock,
+              toBlock,
+            })) as SettledLog[];
+            const last = logs[logs.length - 1];
+            if (last) {
+              let ts = 0;
+              try {
+                const blk = await c.getBlock({ blockNumber: last.blockNumber });
+                ts = Number(blk.timestamp);
+              } catch {
+                /* timestamp is best-effort */
+              }
+              settled = {
+                ts,
+                totalPaid: (last.args.totalPaid as bigint) ?? bounty.acceptedFee,
+                splits: ((last.args.splits as unknown[]) ?? []).map((s) => {
+                  const x = s as Record<string, unknown>;
+                  return { agent: x.agent as Address, bps: Number(x.bps ?? 0) };
+                }),
+              };
+            }
+          }
+        } catch {
+          /* fall through to the graceful, splits-less entry below */
+        }
+        out.push({
+          kind: "Settled",
+          ts: settled?.ts ?? 0,
+          seq: 4,
+          data: {
+            totalPaid: settled?.totalPaid ?? bounty.acceptedFee,
+            splits: settled?.splits ?? [],
+          },
+        });
+      }
+
+      if (bounty.status === "Expired") {
+        out.push({
+          kind: "BountyExpired",
+          ts: 0,
+          seq: 4,
+          data: { refund: bounty.escrow },
+        });
+      }
+
+      out.sort((a, b) => (a.seq - b.seq) || (a.ts - b.ts));
       return out;
     },
   });
@@ -329,7 +384,68 @@ export function useBountyTimeline(id?: bigint) {
   return q;
 }
 
-// ─────────────────── write hooks ───────────────────
+// write hooks
+
+/**
+ * Friendly messages for the BountyExtension custom errors a bidder can hit.
+ * The deployed contract reverts with these custom errors, but Somnia's RPC
+ * surfaces them generically (e.g. "invalid transaction"); decoding against the
+ * ABI lets us show the real reason.
+ */
+const BID_ERROR_MESSAGES: Record<string, string> = {
+  AgentNotRegistered:
+    "Only registered, active agents can bid. Register your agent in the directory first.",
+  AgentMissingSkill:
+    "Your agent doesn't have a skill this bounty requires.",
+  DeadlinePassed: "This bounty's deadline has already passed.",
+  BountyNotOpen: "This bounty is no longer open for bids.",
+  BountyNotFound: "This bounty could not be found.",
+};
+
+/** Turn a thrown bid error into a human-readable message. */
+export function describeBidError(e: unknown): string {
+  if (e instanceof BaseError) {
+    const revert = e.walk(
+      (err) => err instanceof ContractFunctionRevertedError,
+    );
+    if (revert instanceof ContractFunctionRevertedError) {
+      const name = revert.data?.errorName;
+      if (name) {
+        return BID_ERROR_MESSAGES[name] ?? `Bid rejected on-chain (${name}).`;
+      }
+    }
+    const short = e.shortMessage ?? e.message;
+    if (/user rejected|denied|rejected the request/i.test(short)) {
+      return "Transaction rejected in your wallet.";
+    }
+    if (/invalid transaction/i.test(short)) {
+      return "The bid was rejected on-chain. Make sure your wallet is a registered agent eligible for this bounty.";
+    }
+    return short;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+export function usePlaceBid() {
+  const ext = bountyExtensionAddress();
+  const { writeContractAsync, ...rest } = useWriteContract();
+  return {
+    ...rest,
+    placeBid: async (args: {
+      bountyId: bigint;
+      proposedFee: bigint;
+      proposedDeadlineTs: bigint;
+    }) => {
+      if (!ext) throw new Error("BountyExtension not deployed");
+      return writeContractAsync({
+        address: ext,
+        abi: bountyExtensionAbi,
+        functionName: "bid",
+        args: [args.bountyId, args.proposedFee, args.proposedDeadlineTs],
+      });
+    },
+  };
+}
 
 export function usePostBounty() {
   const ext = bountyExtensionAddress();

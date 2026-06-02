@@ -1,6 +1,7 @@
 import { useAccount } from "wagmi";
 import { Redirect, useLocation } from "wouter";
 import { useMyOnChainRole } from "@/lib/domain/onchainRole";
+import { FullPageLoader } from "@/components/ui/spinner";
 import type { Role } from "@/lib/domain/roles";
 import type { ReactNode } from "react";
 
@@ -8,19 +9,6 @@ export function RequireWallet({ children }: { children: ReactNode }) {
   const { address, isConnected } = useAccount();
   if (!isConnected || !address) return <Redirect to="/" />;
   return <>{children}</>;
-}
-
-function FullPageSpinner({ label }: { label: string }) {
-  return (
-    <div className="min-h-[100dvh] flex items-center justify-center bg-background">
-      <div className="text-center space-y-3">
-        <div className="w-8 h-8 border-2 border-amber/30 border-t-amber rounded-full animate-spin mx-auto" />
-        <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-          {label}
-        </p>
-      </div>
-    </div>
-  );
 }
 
 export function RequireRole({
@@ -37,7 +25,7 @@ export function RequireRole({
     setLocation("/");
     return null;
   }
-  if (isLoading) return <FullPageSpinner label="Reading on-chain role…" />;
+  if (isLoading) return <FullPageLoader label="Reading on-chain role…" />;
   if (error) {
     return (
       <div className="min-h-[100dvh] flex items-center justify-center bg-background p-6">

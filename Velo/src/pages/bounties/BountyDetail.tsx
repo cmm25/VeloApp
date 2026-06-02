@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { Link } from "wouter";
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 import { TopBar } from "@/components/TopBar";
 import {
   useBounty,
@@ -7,9 +8,12 @@ import {
   useBountyTimeline,
   useAcceptBid,
   useExpireBounty,
+  usePlaceBid,
+  parseSttToWei,
+  describeBidError,
   type TimelineEntry,
 } from "@/lib/domain/bounties";
-import { useAgent } from "@/lib/domain/agents";
+import { useAgent, skillLabel } from "@/lib/domain/agents";
 import { useAccount } from "wagmi";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
@@ -23,6 +27,8 @@ import {
   Bot,
   GitBranch,
   ShieldAlert,
+  Send,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./BountiesBoard";
@@ -35,17 +41,38 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
       return undefined;
     }
   })();
-  const { data: bounty, isLoading } = useBounty(idNum);
-  const { bids } = useBids(idNum);
+  const { data: bounty, isLoading, refetch: refetchBounty } = useBounty(idNum);
+  const { bids, refetch: refetchBids } = useBids(idNum);
   const timelineQ = useBountyTimeline(idNum);
   const { accept, isPending: acceptPending } = useAcceptBid();
   const { expire, isPending: expirePending } = useExpireBounty();
+  const { placeBid, isPending: bidPending } = usePlaceBid();
   const { address: me } = useAccount();
+
+  const [bidFee, setBidFee] = useState("");
+  const [bidDeadlineHours, setBidDeadlineHours] = useState(24);
+
+  const { data: myAgent, isLoading: myAgentLoading } = useAgent(me);
 
   const isPoster =
     !!bounty && !!me && bounty.poster.toLowerCase() === me.toLowerCase();
   const isExpired =
     !!bounty && Date.now() / 1000 > Number(bounty.deadline) && bounty.status === "Open";
+
+  const isActiveAgent = !!myAgent && myAgent.exists && myAgent.active;
+  const requiredSkills = bounty?.requiredSkills ?? [];
+  const hasRequiredSkill =
+    requiredSkills.length === 0 ||
+    (!!myAgent &&
+      requiredSkills.some((rs) =>
+        myAgent.skills.some((s) => s.toLowerCase() === rs.toLowerCase()),
+      ));
+  const isEligibleAgent = isActiveAgent && hasRequiredSkill;
+
+  // Bidding is open on this bounty for someone other than the poster…
+  const bidOpen = !!bounty && bounty.status === "Open" && !isExpired && !isPoster;
+  // …but only registered, active agents with a matching skill may actually bid.
+  const canBid = bidOpen && !!me && isEligibleAgent;
 
   if (idNum === undefined) {
     return (
@@ -130,9 +157,9 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                     </a>
                   )}
                 </Row>
-                <Row
-                  label="Required skills"
-                  value={bounty.requiredSkills.length.toString()}
+                <RequiredSkills
+                  skills={requiredSkills}
+                  agentSkills={isActiveAgent ? myAgent?.skills : undefined}
                 />
               </dl>
             </section>
@@ -169,6 +196,88 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
               </div>
             )}
 
+            {bidOpen && !canBid && (
+              <BidEligibilityNotice
+                connected={!!me}
+                loading={!!me && myAgentLoading}
+                isActiveAgent={isActiveAgent}
+                hasRequiredSkill={hasRequiredSkill}
+              />
+            )}
+
+            {canBid && (
+              <section className="mb-10">
+                <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+                  <Send className="w-3.5 h-3.5 text-amber/70" /> Place a bid
+                </h2>
+                <div className="border border-border/50 bg-card/40 rounded-sm p-5">
+                  <div className="grid sm:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">
+                        Your fee (STT)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        placeholder="e.g. 0.05"
+                        value={bidFee}
+                        onChange={(e) => setBidFee(e.target.value)}
+                        className="w-full bg-input border border-border focus:border-amber rounded-sm px-3 py-2 text-sm text-chalk font-mono placeholder:text-muted-foreground/50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">
+                        Delivery deadline (hours from now)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={bidDeadlineHours}
+                        onChange={(e) => setBidDeadlineHours(Number(e.target.value))}
+                        className="w-full bg-input border border-border focus:border-amber rounded-sm px-3 py-2 text-sm text-chalk font-mono outline-none"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    disabled={bidPending || !bidFee}
+                    onClick={async () => {
+                      let feeWei: bigint;
+                      try {
+                        feeWei = parseSttToWei(bidFee);
+                      } catch {
+                        toast.error("Invalid fee amount");
+                        return;
+                      }
+                      const deadlineTs = BigInt(
+                        Math.floor(Date.now() / 1000) + bidDeadlineHours * 3600,
+                      );
+                      try {
+                        await placeBid({
+                          bountyId: bounty.id,
+                          proposedFee: feeWei,
+                          proposedDeadlineTs: deadlineTs,
+                        });
+                        toast.success("Bid placed");
+                        setBidFee("");
+                        refetchBids();
+                        refetchBounty();
+                      } catch (e) {
+                        toast.error("Bid failed", {
+                          description: describeBidError(e),
+                        });
+                      }
+                    }}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber hover:bg-amber-soft disabled:opacity-50 text-ink text-xs font-bold uppercase tracking-widest rounded-sm transition-colors"
+                  >
+                    <Send className="w-3 h-3" />
+                    {bidPending ? "Submitting…" : "Submit bid"}
+                  </button>
+                </div>
+              </section>
+            )}
+
             <section className="mb-10">
               <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
                 Bids · {bids.length}
@@ -194,6 +303,8 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                         try {
                           await accept(bounty.id, b.bidId);
                           toast.success("Bid accepted");
+                          refetchBids();
+                          refetchBounty();
                         } catch (e) {
                           toast.error("Accept failed", {
                             description: e instanceof Error ? e.message : String(e),
@@ -223,6 +334,60 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
         )}
       </main>
     </div>
+  );
+}
+
+function BidEligibilityNotice({
+  connected,
+  loading,
+  isActiveAgent,
+  hasRequiredSkill,
+}: {
+  connected: boolean;
+  loading: boolean;
+  isActiveAgent: boolean;
+  hasRequiredSkill: boolean;
+}) {
+  if (loading) {
+    return (
+      <section className="mb-10">
+        <div className="h-20 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+      </section>
+    );
+  }
+
+  let message: string;
+  if (!connected) {
+    message =
+      "Connect a wallet registered as an active coaching agent to place a bid.";
+  } else if (!isActiveAgent) {
+    message =
+      "Only registered, active coaching agents can bid on bounties. Register your agent to participate.";
+  } else if (!hasRequiredSkill) {
+    message =
+      "Your agent isn't registered for the skill this bounty requires, so it can't bid here.";
+  } else {
+    message = "This bounty isn't open to your wallet for bidding.";
+  }
+
+  return (
+    <section className="mb-10">
+      <div className="border border-border/50 bg-card/40 rounded-sm p-5 flex items-start gap-3">
+        <ShieldAlert className="w-4 h-4 text-amber/80 mt-0.5 shrink-0" />
+        <div className="min-w-0">
+          <div className="text-sm text-chalk font-medium mb-1">
+            Bidding is for registered agents
+          </div>
+          <p className="text-xs text-muted-foreground font-light">{message}</p>
+          <Link
+            href="/agents"
+            className="inline-flex items-center gap-1 text-xs text-amber hover:text-amber-soft mt-2"
+          >
+            <Bot className="w-3 h-3" /> Browse the agent registry
+          </Link>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -312,7 +477,7 @@ function Timeline({ entries }: { entries: TimelineEntry[] }) {
             </div>
           </div>
           <div className="text-[10px] font-mono text-muted-foreground shrink-0">
-            blk {e.blockNumber.toString()}
+            {e.ts > 0 ? new Date(e.ts * 1000).toLocaleString() : "—"}
           </div>
         </li>
       ))}
@@ -378,6 +543,59 @@ function SettledSplits({ entries }: { entries: TimelineEntry[] }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+function RequiredSkills({
+  skills,
+  agentSkills,
+}: {
+  // bytes32 skill hashes this bounty requires
+  skills: Hex[];
+  // the connected agent's skills, or undefined when no active agent is connected
+  agentSkills?: Hex[];
+}) {
+  return (
+    <div className="bg-card/40 border border-border/50 px-4 py-3 rounded-sm">
+      <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+        Required skills
+      </div>
+      {skills.length === 0 ? (
+        <div className="font-mono text-xs text-chalk/80">
+          None — open to any agent
+        </div>
+      ) : (
+        <ul className="flex flex-wrap gap-1.5">
+          {skills.map((s) => {
+            const has =
+              agentSkills?.some((a) => a.toLowerCase() === s.toLowerCase()) ??
+              undefined;
+            return (
+              <li
+                key={s}
+                title={s}
+                className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-sm border ${
+                  has === true
+                    ? "border-amber/40 bg-amber/10 text-amber"
+                    : has === false
+                      ? "border-destructive/30 bg-destructive/5 text-destructive/90"
+                      : "border-border/50 bg-background/40 text-chalk/80"
+                }`}
+              >
+                {has === true && <CheckCircle2 className="w-3 h-3" />}
+                {has === false && <XCircle className="w-3 h-3" />}
+                {skillLabel(s)}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {agentSkills && skills.length > 0 && (
+        <div className="text-[10px] text-muted-foreground font-light mt-2">
+          Highlighted skills show what your agent does and doesn't have.
+        </div>
+      )}
+    </div>
   );
 }
 

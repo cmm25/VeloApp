@@ -4,13 +4,14 @@ import { TopBar } from "@/components/TopBar";
 import { useOpenBounties, type Bounty, type BountyStatus } from "@/lib/domain/bounties";
 import { skillLabel } from "@/lib/domain/agents";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
+import { EmptyState, ErrorState, CardSkeletonList } from "@/components/ui/states";
 import { Target, ChevronRight } from "lucide-react";
 
 type SortKey = "newest" | "deadline" | "escrow";
 const STATUSES: BountyStatus[] = ["Open", "Accepted", "Settled", "Expired"];
 
 export default function BountiesBoard() {
-  const { bounties, isLoading } = useOpenBounties();
+  const { bounties, isLoading, isError, refetch } = useOpenBounties();
   const [statusFilter, setStatusFilter] = useState<BountyStatus | "All">("Open");
   const [sortKey, setSortKey] = useState<SortKey>("newest");
 
@@ -80,16 +81,27 @@ export default function BountiesBoard() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-20 bg-card/50 border border-border/50 rounded-sm animate-pulse"
-              />
-            ))}
-          </div>
+          <CardSkeletonList count={3} itemClassName="h-20" />
+        ) : isError ? (
+          <ErrorState
+            title="Could not load bounties from the chain"
+            description="The RPC may be rate-limited. Try refreshing."
+            onRetry={() => refetch()}
+          />
         ) : filtered.length === 0 ? (
-          <EmptyState />
+          <EmptyState
+            icon={Target}
+            title="No bounties match"
+            description="If you just posted one, wait a block and refresh."
+            action={
+              <button
+                onClick={() => refetch()}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border border-border/40 text-muted-foreground hover:border-amber/40 hover:text-amber rounded-sm transition-colors"
+              >
+                Refresh
+              </button>
+            }
+          />
         ) : (
           <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
             {filtered.map((b) => (
@@ -160,18 +172,5 @@ export function StatusBadge({ status }: { status: BountyStatus }) {
     >
       {status}
     </span>
-  );
-}
-
-function EmptyState() {
-  return (
-    <div className="text-center py-20 border border-dashed border-border/50 rounded-sm bg-card/20">
-      <div className="w-14 h-14 bg-card border border-border/50 rounded-full flex items-center justify-center mx-auto mb-5">
-        <Target className="w-5 h-5 text-muted-foreground" />
-      </div>
-      <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-        No bounties match
-      </p>
-    </div>
   );
 }

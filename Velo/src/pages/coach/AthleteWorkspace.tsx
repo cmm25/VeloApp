@@ -1,6 +1,6 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { Link, useLocation } from "wouter";
-import { isAddress, type Address } from "viem";
+import { isAddress, type Address, type Hex } from "viem";
 import { useAccount } from "wagmi";
 import { TopBar } from "@/components/TopBar";
 import { AthleteMonogram } from "@/components/AthleteMonogram";
@@ -8,10 +8,11 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import { useRemoveRoster } from "@/lib/domain/roster";
 import { useTapes, formatTapeDate, formatTapeSize } from "@/lib/domain/tapes";
-import { useMyJobs } from "@/hooks/useVeloContracts";
+import { useJobsByIds } from "@/hooks/useVeloContracts";
 import { useAthleteReceipts } from "@/hooks/useVeloContracts";
 import { shortAddr } from "@/lib/format";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
+import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 import { ArrowLeft, ChevronRight, Film, Plus, Trash2, LinkIcon } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -26,8 +27,23 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
   const athlete = valid ? (addrParam.toLowerCase() as Address) : undefined;
   const { address: coachAddr } = useAccount();
   const { resolve, ensure } = useAthleteDirectory();
-  const { jobs } = useMyJobs(coachAddr);
   const { receipts, count } = useAthleteReceipts(athlete);
+  // Past sessions for this athlete are derived from their SBT receipts (each
+  // carries its jobId) rather than a from-genesis event-log scan, which Somnia
+  // rejects (1000-block window cap). We re-read live job state for those ids and
+  // keep only the ones this coach paid for.
+  const receiptJobIds = useMemo<Hex[]>(() => {
+    const seen = new Set<string>();
+    const out: Hex[] = [];
+    for (const r of receipts) {
+      const key = r.jobId.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r.jobId);
+    }
+    return out;
+  }, [receipts]);
+  const { jobs } = useJobsByIds(receiptJobIds);
   const tapesQ = useTapes(athlete);
   const remove = useRemoveRoster();
   const [, setLocation] = useLocation();
@@ -49,7 +65,17 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
   }
 
   const profile = resolve(athlete);
-  const athleteJobs = jobs.filter((j) => j.athlete.toLowerCase() === athlete);
+  const latestReceipt = receipts.length > 0 ? receipts[receipts.length - 1] : null;
+  const { data: latestRxIpfs } = useIpfsJson(latestReceipt?.ipfsCid);
+  const latestRxSomniaReceiptUrl = useMemo(
+    () => somniaReceiptUrlFromJson(latestRxIpfs),
+    [latestRxIpfs]
+  );
+  const athleteJobs = jobs.filter(
+    (j) =>
+      j.athlete.toLowerCase() === athlete &&
+      (!coachAddr || j.coach.toLowerCase() === coachAddr.toLowerCase()),
+  );
   const tapes = tapesQ.data ?? [];
 
   const handleRemove = async () => {
@@ -198,15 +224,16 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
                 [
                   {
                     role: "lead",
-                    agent: receipts[receipts.length - 1]!.formAgent,
+                    agent: latestReceipt!.formAgent,
                     label: "Form agent",
-                    receiptCid: receipts[receipts.length - 1]!.ipfsCid,
+                    receiptCid: latestReceipt!.ipfsCid,
                   },
                   {
                     role: "sub",
-                    agent: receipts[receipts.length - 1]!.prescriptionAgent,
+                    agent: latestReceipt!.prescriptionAgent,
                     label: "Prescriber",
-                    receiptCid: receipts[receipts.length - 1]!.ipfsCid,
+                    receiptCid: latestReceipt!.ipfsCid,
+                    receiptUrl: latestRxSomniaReceiptUrl ?? undefined,
                   },
                 ] as CompositionNode[]
               }

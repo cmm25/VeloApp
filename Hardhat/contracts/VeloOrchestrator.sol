@@ -40,8 +40,6 @@ contract VeloOrchestrator is
     /// @dev Storage of all jobs, indexed by their deterministic job id.
     mapping(bytes32 jobId => Job) internal _jobs;
 
-    // ─────────────────────── errors ───────────────────────
-
     /// @notice Reverted when a derived job id collides with an existing job.
     error JobAlreadyExists();
     /// @notice Reverted when a view or mutation references a non-existent job.
@@ -59,8 +57,6 @@ contract VeloOrchestrator is
     /// @param receiptDeadline The deadline carried in the receipt struct.
     /// @param jobDeadline     The deadline of the underlying job.
     error ReceiptDeadlineAfterJob(uint64 receiptDeadline, uint64 jobDeadline);
-
-    // ─────────────────────── events ───────────────────────
 
     /// @notice Emitted when the admin updates the minimum job fee.
     /// @param oldFee The previous `minJobFee` value (wei).
@@ -86,8 +82,6 @@ contract VeloOrchestrator is
         _grantRole(FEE_ADMIN_ROLE, admin);
         emit MinJobFeeUpdated(0, minJobFee_);
     }
-
-    // ─────────────────────── coach ───────────────────────
 
     /// @inheritdoc IVeloOrchestrator
     function payJob(address athlete, string calldata videoCid, uint64 deadline)
@@ -118,8 +112,6 @@ contract VeloOrchestrator is
 
         emit JobRequested(jobId, msg.sender, athlete, videoCid, msg.value, deadline);
     }
-
-    // ─────────────────────── agents ───────────────────────
 
     /// @inheritdoc IVeloOrchestrator
     function submitFormReceipt(
@@ -194,8 +186,6 @@ contract VeloOrchestrator is
         emit PrescriptionSubmitted(r.jobId, r.agent, r.ipfsCid, r.summaryHash, r.summary);
     }
 
-    // ─────────────────────── recovery / admin ───────────────────────
-
     /// @inheritdoc IVeloOrchestrator
     function cancelExpired(bytes32 jobId) external override nonReentrant {
         Job storage job = _jobs[jobId];
@@ -237,8 +227,6 @@ contract VeloOrchestrator is
         emit MinJobFeeUpdated(oldFee, newFee);
     }
 
-    // ─────────────────────── views ───────────────────────
-
     /// @inheritdoc IVeloOrchestrator
     function getJob(bytes32 jobId) external view override returns (Job memory) {
         Job memory j = _jobs[jobId];
@@ -272,8 +260,6 @@ contract VeloOrchestrator is
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
     }
-
-    // ─────────────────────── overrides ───────────────────────
 
     function _minJobFee() internal view override returns (uint256) {
         return minJobFee;
