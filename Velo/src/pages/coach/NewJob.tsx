@@ -90,7 +90,7 @@ export default function NewJob() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState<SuccessState | null>(null);
 
-  // ── Bounty mode ──
+  // Bounty mode
   const [mode, setMode] = useState<"direct" | "bounty">("bounty");
   const [bountyBudget, setBountyBudget] = useState<string>("");
   const [bountyDeadlineHours, setBountyDeadlineHours] = useState<number>(48);

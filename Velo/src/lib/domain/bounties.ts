@@ -384,7 +384,7 @@ export function useBountyTimeline(id?: bigint) {
   return q;
 }
 
-// ─────────────────── write hooks ───────────────────
+// write hooks
 
 /**
  * Friendly messages for the BountyExtension custom errors a bidder can hit.

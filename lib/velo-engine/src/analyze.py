@@ -296,7 +296,6 @@ def analyze_video_file(
     if not angles_list:
         raise ValueError("No pose landmarks detected — ensure video contains a visible person")
 
-    # Compute summary statistics
     peak = JointAngles(
         shoulder=max(a.shoulder for a in angles_list),
         elbow=max(a.elbow for a in angles_list),

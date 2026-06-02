@@ -41,7 +41,7 @@ function normalizeRecord(v: unknown): DirectoryRecord | null {
   return { name, verified, ...(verifiedAt ? { verifiedAt } : {}), ...(signature ? { signature } : {}) };
 }
 
-// ---------- localStorage cache (offline fallback) ----------
+// localStorage cache (offline fallback)
 function readMap(): DirectoryMap {
   if (typeof window === "undefined") return {};
   try {
@@ -67,7 +67,7 @@ function writeMap(m: DirectoryMap) {
   window.dispatchEvent(new CustomEvent(EVENT));
 }
 
-// ---------- in-memory shared cache + subscribers ----------
+// in-memory shared cache + subscribers
 let memoryMap: DirectoryMap | null = null;
 const subscribers = new Set<(m: DirectoryMap) => void>();
 
@@ -87,7 +87,7 @@ function mergeCached(updates: DirectoryMap) {
   setCached({ ...getCached(), ...updates });
 }
 
-// ---------- API client ----------
+// API client
 type ApiAthlete = { address: string; name: string; updatedAt: string };
 
 async function apiList(): Promise<DirectoryMap> {
@@ -124,7 +124,7 @@ async function apiUpsert(address: Address, name: string): Promise<void> {
   if (!res.ok) throw new Error(`athletes_upsert ${res.status}`);
 }
 
-// ---------- shared one-shot hydration ----------
+// shared one-shot hydration
 let hydratePromise: Promise<void> | null = null;
 function hydrate(force = false): Promise<void> {
   if (!force && hydratePromise) return hydratePromise;
@@ -155,7 +155,7 @@ function hydrate(force = false): Promise<void> {
   return hydratePromise;
 }
 
-// ---------- pure helpers ----------
+// pure helpers
 export function initialsFor(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "—";
@@ -225,7 +225,7 @@ export const verifyClaimWithServer: ClaimVerifier = async (args) => {
   }
 };
 
-// ---------- hook ----------
+// hook
 export function useAthleteDirectory() {
   const [map, setMap] = useState<DirectoryMap>(() => getCached());
 

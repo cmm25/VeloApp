@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// ── MediaPipe telemetry (from velo-engine) ────────────────────────────────────
+// MediaPipe telemetry (from velo-engine)
 
 export const JointAnglesSchema = z.object({
   shoulder: z.number().describe("Elbow-shoulder-hip angle in degrees"),
@@ -37,7 +37,7 @@ export const TennisTelemetrySchema = z.object({
 
 export type TennisTelemetry = z.infer<typeof TennisTelemetrySchema>;
 
-// ── Form Analysis Report (output of FormAgent AI) ────────────────────────────
+// Form Analysis Report (output of FormAgent AI)
 
 export const FormIssueSchema = z.object({
   area: z.enum([
@@ -73,7 +73,7 @@ export const FormReportSchema = z.object({
 
 export type FormReport = z.infer<typeof FormReportSchema>;
 
-// ── Prescription Report (output of PrescriberAgent AI) ──────────────────────
+// Prescription Report (output of PrescriberAgent AI)
 
 export const DrillSchema = z.object({
   name: z.string().max(80),
@@ -97,7 +97,7 @@ export const PrescriptionReportSchema = z.object({
 
 export type PrescriptionReport = z.infer<typeof PrescriptionReportSchema>;
 
-// ── AI provenance (how each reasoning step was produced) ─────────────────────
+// AI provenance (how each reasoning step was produced)
 // Records whether a verdict came from Somnia's native consensus agent or the
 // Groq fallback, plus the on-chain request/receipt reference when native.
 
@@ -119,7 +119,7 @@ export const AiProvenanceSchema = z.object({
 
 export type AiProvenance = z.infer<typeof AiProvenanceSchema>;
 
-// ── On-chain payload (what gets stored in Supabase + returned by API) ─────────
+// On-chain payload (what gets stored in Supabase + returned by API)
 
 export const StoredReceiptSchema = z.object({
   jobId: z.string(),

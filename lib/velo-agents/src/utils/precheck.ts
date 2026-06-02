@@ -20,7 +20,7 @@ function warn(label: string, detail?: string): void {
   results.push({ label, ok: true, warn: true, detail });
 }
 
-// ── Config checks ─────────────────────────────────────────────────────────────
+// Config checks
 check("ORCHESTRATOR_ADDRESS set", !!config.contracts.orchestrator, config.contracts.orchestrator || "MISSING");
 check("AGENT_FORM_PRIVATE_KEY set", !!config.agents.formPrivateKey);
 check("AGENT_PRESCRIBER_PRIVATE_KEY set", !!config.agents.prescriberPrivateKey);
@@ -38,7 +38,7 @@ if (!config.somnia.wsUrl) {
   check("SOMNIA_WS_URL set", true, config.somnia.wsUrl);
 }
 
-// ── Chain connectivity ────────────────────────────────────────────────────────
+// Chain connectivity
 async function checkChain() {
   try {
     const provider = new ethers.JsonRpcProvider(config.somnia.rpcUrl, {
@@ -60,7 +60,7 @@ async function checkChain() {
   }
 }
 
-// ── Agent wallet balances ─────────────────────────────────────────────────────
+// Agent wallet balances
 async function checkBalances() {
   const provider = new ethers.JsonRpcProvider(config.somnia.rpcUrl, {
     chainId: config.somnia.chainId,
@@ -88,7 +88,7 @@ async function checkBalances() {
   }
 }
 
-// ── Vision engine ─────────────────────────────────────────────────────────────
+// Vision engine
 async function checkVisionEngine() {
   if (config.vision.mode === "mock") {
     warn("Vision engine in mock mode — MediaPipe not used");

@@ -114,7 +114,7 @@ export async function getChainDomainSeparator(): Promise<string> {
   return await orch.domainSeparator();
 }
 
-// ── Agent self-registration ────────────────────────────────────────────────
+// Agent self-registration
 //
 // Skills (keccak256 of string) that each agent advertises on-chain.
 // These match what the AgentRegistry test queries via agentsBySkill().

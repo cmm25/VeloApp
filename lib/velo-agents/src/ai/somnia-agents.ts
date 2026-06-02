@@ -38,7 +38,7 @@ const log = makeLogger("somnia-agents");
  * the off-chain Groq path cleanly.
  */
 
-// ── ABIs ───────────────────────────────────────────────────────────────────
+// ABIs
 
 // VeloAgentRelay — our on-chain relay (see Hardhat/contracts/VeloAgentRelay.sol).
 const RELAY_ABI = [
@@ -182,7 +182,7 @@ export async function runJsonApiRequest(
   return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string");
 }
 
-// ── Core request lifecycle ──────────────────────────────────────────────────
+// Core request lifecycle
 
 async function dispatchRequest(
   agentId: string,

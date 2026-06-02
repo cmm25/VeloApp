@@ -38,7 +38,7 @@ export type CoachLink = {
   createdAt: string;
 };
 
-// ---------- Coach: roster ----------
+// Coach: roster
 
 export function useCoachRoster(enabled: boolean) {
   return useQuery({
@@ -92,7 +92,7 @@ export function useRemoveRoster() {
   });
 }
 
-// ---------- Coach: outgoing pending roster adds ----------
+// Coach: outgoing pending roster adds
 
 export function useCoachPendingRoster(enabled: boolean) {
   return useQuery({
@@ -110,7 +110,7 @@ export function useCoachPendingRoster(enabled: boolean) {
   });
 }
 
-// ---------- Athlete: my coaches ----------
+// Athlete: my coaches
 
 export function useMyCoaches(enabled: boolean) {
   return useQuery({
@@ -128,7 +128,7 @@ export function useMyCoaches(enabled: boolean) {
   });
 }
 
-// ---------- Public: coaches for an athlete ----------
+// Public: coaches for an athlete
 
 export function useCoachesForAthlete(address: string | undefined) {
   return useQuery({
@@ -143,7 +143,7 @@ export function useCoachesForAthlete(address: string | undefined) {
   });
 }
 
-// ---------- Athlete: incoming pending roster requests ----------
+// Athlete: incoming pending roster requests
 
 export function useMyRosterRequests(enabled: boolean) {
   return useQuery({

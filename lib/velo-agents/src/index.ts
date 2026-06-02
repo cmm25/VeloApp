@@ -22,7 +22,6 @@ async function main() {
   log.info("  Form Analyst + Prescriber — Somnia Testnet");
   log.info("═══════════════════════════════════════════════");
 
-  // Validate required config before starting
   validateRequiredForAgents();
 
   // Start the API server (healthz + receipt indexer + auth + pinata sign)
@@ -37,7 +36,6 @@ async function main() {
     });
   });
 
-  // Start the chain event watcher
   const stopWatcher = await startWatcher({
     onJobRequested: async (event) => {
       log.info("► Job received — starting Form Agent", { jobId: event.jobId });
@@ -66,7 +64,6 @@ async function main() {
 
   log.info("Agent runner active — watching for jobs on Somnia…");
 
-  // Graceful shutdown
   const shutdown = async (signal: string) => {
     log.info(`${signal} received — shutting down…`);
     stopWatcher();
