@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 import { Link, useLocation } from "wouter";
-import { useMyJobs, useCancelExpired, orchestratorAddress } from "@/hooks/useVeloContracts";
+import {
+  useJobsByIds,
+  useAthletesReceiptJobIds,
+  useCancelExpired,
+  orchestratorAddress,
+  type Job,
+  type JobStatus,
+} from "@/hooks/useVeloContracts";
+import { useRecentJobs } from "@/lib/domain/recentJobs";
 import { TopBar } from "@/components/TopBar";
 import { AgentActivityStrip } from "@/components/AgentActivityStrip";
 import { IndexerSourceBadge } from "@/components/IndexerSourceBadge";
@@ -11,15 +19,11 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import {
   useCoachRoster,
-  useCoachInvites,
   useCoachPendingRoster,
-  useRevokeInvite,
   useAddRosterByAddress,
   useRemoveRoster,
   type RosterEntry,
-  type CoachInvite,
 } from "@/lib/domain/roster";
-import { InviteAthleteModal } from "@/components/InviteAthleteModal";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
 import {
@@ -31,9 +35,9 @@ import {
   Activity,
   AlertTriangle,
   X,
-  Mail,
   UserPlus,
   ChevronDown,
+  History,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -100,24 +104,55 @@ function DeadlineCell({ deadline, status }: { deadline: bigint; status: string }
 
 export default function CoachHome() {
   const { address } = useAccount();
-  const { jobs, isLoading, refetch } = useMyJobs(address);
   const [, setLocation] = useLocation();
   const { writeContractAsync, isPending: cancelling } = useCancelExpired();
   const publicClient = usePublicClient({ chainId: somniaTestnet.id });
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [inviteOpen, setInviteOpen] = useState(false);
   const { resolve, ensure } = useAthleteDirectory();
 
   const rosterQ = useCoachRoster(!!address);
   const pendingRosterQ = useCoachPendingRoster(!!address);
-  const invitesQ = useCoachInvites(!!address);
-  const revoke = useRevokeInvite();
   const removeRoster = useRemoveRoster();
   const addByAddress = useAddRosterByAddress();
   const roster: RosterEntry[] = rosterQ.data ?? [];
   const pendingRoster: RosterEntry[] = pendingRosterQ.data ?? [];
-  const invites: CoachInvite[] = invitesQ.data ?? [];
-  const pendingInvites = invites.filter((i) => !i.claimedAt && !i.revokedAt);
+
+  // Sessions are reconstructed WITHOUT any event-log scan: Somnia caps
+  // `eth_getLogs` at 1000 blocks and jobIds are content-hashed (no counter to
+  // enumerate), so a from-genesis `JobRequested` scan is impossible. Instead we
+  // gather candidate jobIds from two scan-free sources — the coach's
+  // locally-remembered recent jobs and every jobId attached to a roster
+  // athlete's SBT (each completed session appends a ReceiptRef) — then re-read
+  // each on-chain via `getJob` and keep the ones where this wallet is the coach.
+  const { recent } = useRecentJobs(address);
+  const recentIds = useMemo(() => recent.map((r) => r.jobId), [recent]);
+  const rosterAthletes = useMemo(
+    () => roster.map((r) => r.athleteAddress as `0x${string}`),
+    [roster],
+  );
+  const { jobIds: receiptJobIds } = useAthletesReceiptJobIds(rosterAthletes);
+  const knownJobIds = useMemo(() => {
+    const seen = new Set<string>();
+    const out: `0x${string}`[] = [];
+    [...recentIds, ...receiptJobIds].forEach((id) => {
+      const k = id.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(id);
+      }
+    });
+    return out;
+  }, [recentIds, receiptJobIds]);
+  const { jobs: knownJobs, isLoading, refetch } = useJobsByIds(knownJobIds);
+  const jobs = useMemo<Job[]>(
+    () =>
+      address
+        ? knownJobs
+            .filter((j) => j.coach.toLowerCase() === address.toLowerCase())
+            .sort((a, b) => Number(b.createdAt - a.createdAt))
+        : [],
+    [knownJobs, address],
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [addAddr, setAddAddr] = useState("");
   const [addLabel, setAddLabel] = useState("");
@@ -143,6 +178,63 @@ export default function CoachHome() {
       completed: jobs.filter((j) => j.status === "Completed").length,
     };
   }, [jobs]);
+
+  // Authoritative on-chain status by jobId across every known job (used to tell
+  // whether a locally-remembered recent job has already settled).
+  const statusById = useMemo(() => {
+    const m = new Map<string, Job>();
+    knownJobs.forEach((j) => m.set(j.jobId.toLowerCase(), j));
+    return m;
+  }, [knownJobs]);
+
+  // Active = in-progress sessions worth resuming. Union of on-chain in-progress
+  // jobs and locally-remembered recent jobs, de-duped by jobId.
+  type ActiveEntry = {
+    jobId: `0x${string}`;
+    athlete: `0x${string}`;
+    status: JobStatus;
+    createdAt: number; // ms
+  };
+  const activeJobs = useMemo<ActiveEntry[]>(() => {
+    const map = new Map<string, ActiveEntry>();
+    jobs.forEach((j) => {
+      if (j.status === "Requested" || j.status === "FormSubmitted") {
+        map.set(j.jobId.toLowerCase(), {
+          jobId: j.jobId,
+          athlete: j.athlete,
+          status: j.status,
+          createdAt: Number(j.createdAt) * 1000,
+        });
+      }
+    });
+    recent.forEach((r) => {
+      const key = r.jobId.toLowerCase();
+      const chain = statusById.get(key);
+      // Settled jobs are no longer "active" — they live in All sessions below.
+      if (chain && (chain.status === "Completed" || chain.status === "Cancelled")) return;
+      if (!map.has(key)) {
+        map.set(key, {
+          jobId: r.jobId,
+          athlete: chain?.athlete ?? r.athlete,
+          status: chain?.status ?? "Requested",
+          createdAt: r.createdAt,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
+  }, [jobs, recent, statusById]);
+
+  // Completed sessions — shown in a dedicated Past Sessions section.
+  const completedJobs = useMemo(
+    () => jobs.filter((j) => j.status === "Completed").sort((a, b) => Number(b.createdAt - a.createdAt)),
+    [jobs],
+  );
+
+  // Completed/cancelled recent jobs are intentionally NOT pruned from the local
+  // store: they're filtered out of "Active sessions" via `statusById` above and
+  // they reappear as Past sessions from the SBT-derived list, so keeping them
+  // around does no harm and survives a window where the SBT read is still
+  // loading.
 
   const handleQuickCancel = async (jobId: `0x${string}`, fee: bigint) => {
     const orch = orchestratorAddress();
@@ -219,16 +311,6 @@ export default function CoachHome() {
     }
   };
 
-  const handleRevoke = async (id: string) => {
-    if (!confirm("Revoke this pending invite? The link will no longer work.")) return;
-    try {
-      await revoke.mutateAsync(id);
-      toast.success("Invite revoked");
-    } catch (err) {
-      toast.error("Revoke failed", { description: err instanceof Error ? err.message : String(err) });
-    }
-  };
-
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background selection:bg-amber/30 selection:text-amber">
       <TopBar />
@@ -248,12 +330,6 @@ export default function CoachHome() {
               title="Send a roster request to an existing wallet"
             >
               <UserPlus className="w-4 h-4" /> Add by address
-            </button>
-            <button
-              onClick={() => setInviteOpen(true)}
-              className="inline-flex items-center gap-2 bg-card hover:bg-border/40 border border-border/60 text-chalk px-4 py-2.5 font-bold tracking-wide rounded-sm text-sm"
-            >
-              <Mail className="w-4 h-4" /> Invite by email
             </button>
             <button
               onClick={() => setLocation("/coach/new")}
@@ -317,14 +393,14 @@ export default function CoachHome() {
                   Build your roster
                 </div>
                 <p className="text-sm text-muted-foreground font-light">
-                  Invite an athlete by email — they'll claim a wallet and start owning their record.
+                  Add an athlete by their wallet address — they'll accept on their dashboard and start owning their record.
                 </p>
               </div>
               <button
-                onClick={() => setInviteOpen(true)}
+                onClick={() => setAddOpen(true)}
                 className="inline-flex items-center gap-2 bg-amber hover:bg-amber-soft text-ink px-4 py-2.5 font-bold tracking-wide rounded-sm shrink-0"
               >
-                <UserPlus className="w-4 h-4" /> Invite first athlete
+                <UserPlus className="w-4 h-4" /> Add first athlete
               </button>
             </div>
           ) : (
@@ -354,11 +430,11 @@ export default function CoachHome() {
               })}
               <li className="shrink-0">
                 <button
-                  onClick={() => setInviteOpen(true)}
+                  onClick={() => setAddOpen(true)}
                   className="flex items-center gap-2 px-4 py-3 bg-card/20 hover:bg-card/40 border border-dashed border-border/50 hover:border-amber/50 rounded-sm w-40 h-full justify-center text-muted-foreground hover:text-amber"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span className="text-[11px] uppercase tracking-widest font-bold">Invite</span>
+                  <span className="text-[11px] uppercase tracking-widest font-bold">Add</span>
                 </button>
               </li>
             </ul>
@@ -398,36 +474,96 @@ export default function CoachHome() {
           </section>
         )}
 
-        {/* Pending invites */}
-        {pendingInvites.length > 0 && (
-          <section className="mb-10">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
-              Pending invites · {pendingInvites.length}
+        <AgentActivityStrip />
+
+        {/* Active sessions — resume in-progress work, surfaced instantly from a
+            local record so a just-submitted job is reachable before the indexer
+            catches up. */}
+        {activeJobs.length > 0 && (
+          <section className="mt-10">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+              <Activity className="w-3 h-3 text-amber" />
+              Active sessions · {activeJobs.length}
             </h2>
-            <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
-              {pendingInvites.map((inv) => (
-                <li key={inv.id} className="flex items-center gap-4 px-4 py-3">
-                  <Mail className="w-4 h-4 text-amber/70 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-chalk truncate">{inv.displayName}</div>
-                    <div className="text-[10px] font-mono text-muted-foreground truncate">
-                      {inv.email} · expires {new Date(inv.expiresAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleRevoke(inv.id)}
-                    disabled={revoke.isPending}
-                    className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground hover:text-destructive px-2 py-1 border border-border/50 hover:border-destructive/40 rounded-sm transition-colors disabled:opacity-50"
-                  >
-                    Revoke
-                  </button>
-                </li>
-              ))}
+            <ul className="grid sm:grid-cols-2 gap-3">
+              {activeJobs.map((a) => {
+                const athlete = resolve(a.athlete);
+                const athleteName = athlete?.name ?? `Athlete ${a.athlete.slice(2, 6)}`;
+                return (
+                  <li key={a.jobId}>
+                    <Link
+                      href={`/coach/jobs/${a.jobId}`}
+                      className="flex items-center gap-3 px-4 py-3 bg-card/40 hover:bg-card border border-border/50 hover:border-amber/40 rounded-sm transition-colors"
+                    >
+                      <AthleteMonogram name={athleteName} size="md" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm text-chalk truncate font-medium">
+                          {athleteName}
+                        </div>
+                        <div className="font-mono text-[10px] text-muted-foreground truncate">
+                          {shortAddr(a.jobId, 6, 4)}
+                        </div>
+                      </div>
+                      <StatusBadge status={a.status} />
+                      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                    </Link>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}
 
-        <AgentActivityStrip />
+        {/* Past Sessions — completed jobs, each links to the full JobDetail view */}
+        {(completedJobs.length > 0 || isLoading) && (
+          <section className="mt-10">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+              <History className="w-3 h-3 text-amber" />
+              Past sessions · {completedJobs.length}
+            </h2>
+            {isLoading ? (
+              <div className="grid sm:grid-cols-2 gap-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-20 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <ul className="grid sm:grid-cols-2 gap-3">
+                {completedJobs.map((job, i) => {
+                  const athlete = resolve(job.athlete);
+                  const athleteName = athlete?.name ?? `Athlete ${job.athlete.slice(2, 6)}`;
+                  return (
+                    <motion.li
+                      key={job.jobId}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.04 }}
+                    >
+                      <Link
+                        href={`/coach/jobs/${job.jobId}`}
+                        className="flex items-center gap-3 px-4 py-3 bg-card/40 hover:bg-card border border-border/50 hover:border-amber/40 rounded-sm transition-colors group"
+                      >
+                        <AthleteMonogram name={athleteName} size="md" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-chalk truncate font-medium">{athleteName}</div>
+                          <div className="font-mono text-[10px] text-muted-foreground truncate">
+                            {shortAddr(job.jobId, 6, 4)} · {timeUntil(job.createdAt)} ago · {formatStt(job.fee)}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border text-[10px] uppercase tracking-wider font-bold text-amber bg-amber/10 border-amber/30">
+                            <CheckCircle2 className="w-3 h-3" /> Done
+                          </span>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-amber transition-colors" />
+                        </div>
+                      </Link>
+                    </motion.li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+        )}
 
         {/* Sessions — collapsible */}
         <section className="mt-10">
@@ -545,8 +681,6 @@ export default function CoachHome() {
           </details>
         </section>
       </main>
-
-      {inviteOpen && <InviteAthleteModal onClose={() => setInviteOpen(false)} />}
     </div>
   );
 }

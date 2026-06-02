@@ -1,12 +1,9 @@
-import hre from "hardhat";
+import { network } from "hardhat";
 import * as fs from "fs";
 import * as path from "path";
+import { fileURLToPath } from "url";
 
-// hre.ethers is injected by @nomicfoundation/hardhat-ethers at runtime.
-// TypeScript doesn't see plugin augmentations without a cast in v3.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ethers = (hre as any).ethers;
-const networkName: string = (hre as any).network?.name ?? process.env.HARDHAT_NETWORK ?? "hardhat";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 interface Deployment {
   network: string;
@@ -20,6 +17,7 @@ interface Deployment {
     veloOrchestrator?: string;
     reputation?: string;
     bountyExtension?: string;
+    somniaAgentRelay?: string;
   };
   minJobFee?: string;
   minBountyFee?: string;
@@ -29,22 +27,29 @@ function safeLower(v: unknown): string {
   return (v?.toString?.() ?? "").toLowerCase();
 }
 
-function parseFee(env?: string, fallback = "0.001") {
-  return ethers.parseEther(env && env.length > 0 ? env : fallback);
-}
-
-async function hasBytecode(addr: string): Promise<boolean> {
-  try {
-    const code = await ethers.provider.getCode(addr);
-    return code !== "0x" && code !== "0x0";
-  } catch {
-    return false;
-  }
-}
-
 async function main() {
-  const [deployer] = await ethers.getSigners();
-  const net = networkName;
+  const { ethers, networkName: net } = await network.connect();
+
+  function parseFee(env?: string, fallback = "0.001") {
+    return ethers.parseEther(env && env.length > 0 ? env : fallback);
+  }
+
+  async function hasBytecode(addr: string): Promise<boolean> {
+    try {
+      const code = await ethers.provider.getCode(addr);
+      return code !== "0x" && code !== "0x0";
+    } catch {
+      return false;
+    }
+  }
+
+  const signers = await ethers.getSigners();
+  const deployer = signers[0];
+  if (!deployer) {
+    throw new Error(
+      "No deployer account. Set DEPLOYER_PRIVATE_KEY in Hardhat/.env (64 hex chars, with or without 0x).",
+    );
+  }
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
   console.log(`\nDeployer:  ${deployer.address}`);
@@ -219,6 +224,70 @@ async function main() {
     console.log("  ✓ CoachRegistry linked to AthleteSBT");
   }
 
+  /* 7. VeloAgentRelay (Somnia native AI result relay) */
+  // The relay forwards native agent requests to the Somnia platform with itself
+  // as the callback target, captures the consensus result, and re-emits it so
+  // the off-chain runner can read a genuine on-chain inference result.
+  const SOMNIA_AGENTS_PLATFORM =
+    process.env.SOMNIA_AGENTS_CONTRACT ?? "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776";
+
+  // Derive operator (agent EOA) addresses from the same keys the runner uses,
+  // so both the Form and Prescriber agents can spend through the relay.
+  function deriveAddr(pk?: string): string | undefined {
+    const k = pk && pk.length > 0 ? (pk.startsWith("0x") ? pk : `0x${pk}`) : undefined;
+    if (!k || !/^0x[0-9a-fA-F]{64}$/.test(k)) return undefined;
+    try {
+      return new ethers.Wallet(k).address;
+    } catch {
+      return undefined;
+    }
+  }
+  const operatorAddrs = [
+    deriveAddr(process.env.AGENT_FORM_PRIVATE_KEY),
+    deriveAddr(process.env.AGENT_PRESCRIBER_PRIVATE_KEY),
+  ].filter((a): a is string => Boolean(a));
+
+  let relayAddr = contracts.somniaAgentRelay && (await hasBytecode(contracts.somniaAgentRelay))
+    ? contracts.somniaAgentRelay : undefined;
+
+  if (relayAddr) {
+    try {
+      const ex = await ethers.getContractAt("VeloAgentRelay", relayAddr);
+      if (safeLower(await ex.platform()) !== safeLower(SOMNIA_AGENTS_PLATFORM)) {
+        console.log("VeloAgentRelay points to wrong platform → redeploy");
+        relayAddr = undefined;
+      }
+    } catch { relayAddr = undefined; }
+  }
+
+  if (!relayAddr) {
+    const Relay = await ethers.getContractFactory("VeloAgentRelay");
+    const relay = await Relay.deploy(SOMNIA_AGENTS_PLATFORM, deployer.address, operatorAddrs);
+    await relay.waitForDeployment();
+    relayAddr = await relay.getAddress();
+    console.log(`VeloAgentRelay → ${relayAddr}`);
+    console.log(`  platform:  ${SOMNIA_AGENTS_PLATFORM}`);
+    console.log(
+      `  operators: ${operatorAddrs.join(", ") || "(none — set AGENT_*_PRIVATE_KEY, then grant OPERATOR_ROLE later)"}`,
+    );
+  } else {
+    console.log(`VeloAgentRelay → ${relayAddr} (reused)`);
+  }
+  contracts.somniaAgentRelay = relayAddr;
+
+  // Ensure both agent EOAs hold OPERATOR_ROLE (idempotent — covers reuse or
+  // key changes). Requires the deployer to hold DEFAULT_ADMIN_ROLE (it does).
+  if (operatorAddrs.length > 0) {
+    const relayC = await ethers.getContractAt("VeloAgentRelay", relayAddr);
+    const OPERATOR_ROLE = await relayC.OPERATOR_ROLE();
+    for (const op of operatorAddrs) {
+      if (!(await relayC.hasRole(OPERATOR_ROLE, op))) {
+        await (await relayC.grantRole(OPERATOR_ROLE, op)).wait();
+        console.log(`  ✓ granted OPERATOR_ROLE to ${op}`);
+      }
+    }
+  }
+
   const out: Deployment = {
     network: net, chainId,
     deployedAt: new Date().toISOString(),
@@ -234,6 +303,9 @@ async function main() {
   for (const [k, v] of Object.entries(contracts)) {
     console.log(`  ${k.padEnd(20)} ${v}`);
   }
+
+  console.log("\nRunner env (add to lib/velo-agents/.env):");
+  console.log(`  SOMNIA_AGENT_RELAY_ADDRESS=${contracts.somniaAgentRelay ?? ""}`);
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

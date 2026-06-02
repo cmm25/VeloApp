@@ -27,46 +27,106 @@ const asStr = (v: unknown, fallback = ""): string =>
   typeof v === "string" ? v : fallback;
 const asArr = <T = unknown>(v: unknown): T[] =>
   Array.isArray(v) ? (v as T[]) : [];
+const asNum = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+const cap = (s: string): string => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
 
-/** Heuristic adapter — tolerant of the form agent's evolving zod schema. */
+/**
+ * Heuristic adapter — tolerant of the form agent's evolving zod schema.
+ *
+ * The form agent pins `{ type, jobId, telemetry, formReport, provenance }` to
+ * IPFS, so the real data lives under `formReport` (stroke, strengths, issues)
+ * and `telemetry` (dominant stroke, symmetry, counts). We dig into those, but
+ * stay tolerant of older flat payloads so nothing regresses.
+ */
 export function toStrokeReport(raw: unknown, fallbackSummary = ""): StrokeReport {
-  const r = asObj(raw);
-  const stroke = asStr(r.stroke ?? r.shot ?? r.shotType, "Forehand");
+  const root = asObj(raw);
+  const form = asObj(root.formReport ?? root.form_report);
+  const telemetry = asObj(root.telemetry);
+  const fr = Object.keys(form).length ? form : root;
+
+  const strokeRaw = asStr(
+    fr.strokeType ??
+      fr.stroke_type ??
+      telemetry.dominantStroke ??
+      telemetry.dominant_stroke ??
+      root.stroke ??
+      root.shot ??
+      root.shotType,
+    "",
+  );
+  const stroke = strokeRaw && strokeRaw !== "unknown" ? cap(strokeRaw) : "Unknown stroke";
+
   const sessionGoal = asStr(
-    r.session_goal ?? r.sessionGoal ?? r.goal,
+    root.session_goal ?? root.sessionGoal ?? root.goal ?? fr.sessionGoal,
     "Improve consistency under pressure.",
   );
 
-  const strengths = asArr<unknown>(r.strengths ?? r.positives).map((s) =>
-    asStr(s),
-  ).filter(Boolean);
+  const strengths = asArr<unknown>(fr.strengths ?? root.strengths ?? root.positives)
+    .map((s) => {
+      if (typeof s === "string") return s;
+      const o = asObj(s);
+      const obs = asStr(o.observation ?? o.detail ?? o.note ?? o.text);
+      const area = asStr(o.area ?? o.label);
+      if (obs && area) return `${cap(area)} — ${obs}`;
+      return obs || area;
+    })
+    .filter(Boolean);
 
-  const faults = asArr<unknown>(r.faults ?? r.issues ?? r.weaknesses).map(
-    (f) => {
-      const o = asObj(f);
-      return {
-        area: asStr(o.area ?? o.phase ?? o.label, "Technique"),
-        detail: asStr(o.detail ?? o.description ?? o.note ?? f, ""),
-      };
-    },
-  );
-
-  const metricsRaw = asObj(r.metrics ?? r.measurements);
-  const metrics = Object.entries(metricsRaw)
-    .filter(([, v]) => v !== null && v !== undefined)
-    .map(([k, v]) => ({
-      label: prettify(k),
-      value: typeof v === "number" ? formatNumber(v) : String(v),
-    }));
+  const faults = asArr<unknown>(
+    fr.issues ?? root.faults ?? root.issues ?? root.weaknesses,
+  ).map((f) => {
+    if (typeof f === "string") return { area: "Technique", detail: f };
+    const o = asObj(f);
+    const area = cap(asStr(o.area ?? o.phase ?? o.label, "Technique"));
+    const observation = asStr(o.observation ?? o.detail ?? o.description ?? o.note);
+    const recommendation = asStr(o.recommendation ?? o.fix ?? o.advice);
+    const detail = [observation, recommendation && `Fix: ${recommendation}`]
+      .filter(Boolean)
+      .join(" ");
+    return { area, detail };
+  });
 
   return {
     stroke,
     sessionGoal,
     strengths,
     faults,
-    metrics,
-    rawNote: fallbackSummary || asStr(r.notes ?? r.summary),
+    metrics: buildMetrics(fr, telemetry, root),
+    rawNote: fallbackSummary || asStr(root.notes ?? root.summary),
   };
+}
+
+/** Surface a few real, human-meaningful metrics from the report + telemetry. */
+function buildMetrics(
+  form: Unknown,
+  telemetry: Unknown,
+  root: Unknown,
+): { label: string; value: string }[] {
+  const out: { label: string; value: string }[] = [];
+
+  const overall = asNum(form.overallScore ?? form.overall_score);
+  if (overall !== null) out.push({ label: "Overall Score", value: `${formatNumber(overall)} / 10` });
+
+  const symmetry = asNum(telemetry.symmetryScore ?? telemetry.symmetry_score);
+  if (symmetry !== null) out.push({ label: "Symmetry", value: `${Math.round(symmetry * 100)}%` });
+
+  const strokeCount = asNum(telemetry.strokeCount ?? telemetry.stroke_count);
+  if (strokeCount !== null) out.push({ label: "Strokes", value: formatNumber(strokeCount) });
+
+  const frames = asNum(telemetry.framesAnalyzed ?? telemetry.frames_analyzed);
+  if (frames !== null) out.push({ label: "Frames Analyzed", value: formatNumber(frames) });
+
+  if (out.length) return out;
+
+  // Fall back to any flat metrics object on older payloads.
+  const metricsRaw = asObj(root.metrics ?? root.measurements);
+  return Object.entries(metricsRaw)
+    .filter(([, v]) => v !== null && v !== undefined)
+    .map(([k, v]) => ({
+      label: prettify(k),
+      value: typeof v === "number" ? formatNumber(v) : String(v),
+    }));
 }
 
 export function toPrescriptionPlan(
