@@ -65,6 +65,7 @@ replit.nix
 .agents/
 
 # ── Reference folders  ───────────────────
+scripts/
 /reference-files-eshaan/
 .agents/
 .docs/
