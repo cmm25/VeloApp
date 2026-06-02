@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "wouter";
 import type { Address } from "viem";
 import { TopBar } from "@/components/TopBar";
@@ -7,6 +8,8 @@ import {
   useBountyTimeline,
   useAcceptBid,
   useExpireBounty,
+  usePlaceBid,
+  parseSttToWei,
   type TimelineEntry,
 } from "@/lib/domain/bounties";
 import { useAgent } from "@/lib/domain/agents";
@@ -23,6 +26,7 @@ import {
   Bot,
   GitBranch,
   ShieldAlert,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./BountiesBoard";
@@ -35,17 +39,22 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
       return undefined;
     }
   })();
-  const { data: bounty, isLoading } = useBounty(idNum);
-  const { bids } = useBids(idNum);
+  const { data: bounty, isLoading, refetch: refetchBounty } = useBounty(idNum);
+  const { bids, refetch: refetchBids } = useBids(idNum);
   const timelineQ = useBountyTimeline(idNum);
   const { accept, isPending: acceptPending } = useAcceptBid();
   const { expire, isPending: expirePending } = useExpireBounty();
+  const { placeBid, isPending: bidPending } = usePlaceBid();
   const { address: me } = useAccount();
+
+  const [bidFee, setBidFee] = useState("");
+  const [bidDeadlineHours, setBidDeadlineHours] = useState(24);
 
   const isPoster =
     !!bounty && !!me && bounty.poster.toLowerCase() === me.toLowerCase();
   const isExpired =
     !!bounty && Date.now() / 1000 > Number(bounty.deadline) && bounty.status === "Open";
+  const canBid = !!bounty && bounty.status === "Open" && !isExpired && !!me && !isPoster;
 
   if (idNum === undefined) {
     return (
@@ -169,6 +178,79 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
               </div>
             )}
 
+            {canBid && (
+              <section className="mb-10">
+                <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+                  <Send className="w-3.5 h-3.5 text-amber/70" /> Place a bid
+                </h2>
+                <div className="border border-border/50 bg-card/40 rounded-sm p-5">
+                  <div className="grid sm:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">
+                        Your fee (STT)
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        placeholder="e.g. 0.05"
+                        value={bidFee}
+                        onChange={(e) => setBidFee(e.target.value)}
+                        className="w-full bg-input border border-border focus:border-amber rounded-sm px-3 py-2 text-sm text-chalk font-mono placeholder:text-muted-foreground/50 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1.5">
+                        Delivery deadline (hours from now)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={bidDeadlineHours}
+                        onChange={(e) => setBidDeadlineHours(Number(e.target.value))}
+                        className="w-full bg-input border border-border focus:border-amber rounded-sm px-3 py-2 text-sm text-chalk font-mono outline-none"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    disabled={bidPending || !bidFee}
+                    onClick={async () => {
+                      let feeWei: bigint;
+                      try {
+                        feeWei = parseSttToWei(bidFee);
+                      } catch {
+                        toast.error("Invalid fee amount");
+                        return;
+                      }
+                      const deadlineTs = BigInt(
+                        Math.floor(Date.now() / 1000) + bidDeadlineHours * 3600,
+                      );
+                      try {
+                        await placeBid({
+                          bountyId: bounty.id,
+                          proposedFee: feeWei,
+                          proposedDeadlineTs: deadlineTs,
+                        });
+                        toast.success("Bid placed");
+                        setBidFee("");
+                        refetchBids();
+                        refetchBounty();
+                      } catch (e) {
+                        toast.error("Bid failed", {
+                          description: e instanceof Error ? e.message : String(e),
+                        });
+                      }
+                    }}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-amber hover:bg-amber-soft disabled:opacity-50 text-ink text-xs font-bold uppercase tracking-widest rounded-sm transition-colors"
+                  >
+                    <Send className="w-3 h-3" />
+                    {bidPending ? "Submitting…" : "Submit bid"}
+                  </button>
+                </div>
+              </section>
+            )}
+
             <section className="mb-10">
               <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
                 Bids · {bids.length}
@@ -194,6 +276,8 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                         try {
                           await accept(bounty.id, b.bidId);
                           toast.success("Bid accepted");
+                          refetchBids();
+                          refetchBounty();
                         } catch (e) {
                           toast.error("Accept failed", {
                             description: e instanceof Error ? e.message : String(e),
