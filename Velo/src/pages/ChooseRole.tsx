@@ -41,11 +41,26 @@ const ROLES: RoleOption[] = [
 export default function ChooseRole() {
   const { address } = useAccount();
   const [, setLocation] = useLocation();
-  const { role: currentRole, refetch } = useMyOnChainRole();
+  const { role: currentRole, isLoading: roleLoading, refetch } = useMyOnChainRole();
   const pub = usePublicClient();
   const { writeContractAsync } = useWriteContract();
   const [pending, setPending] = useState<Role | null>(null);
   const [coachName, setCoachName] = useState<string>("");
+
+  // Hold the screen while the chain query is in-flight — prevents the "Choose
+  // a role" UI flashing for accounts that already have an established role.
+  if (roleLoading) {
+    return (
+      <div className="min-h-[100dvh] flex items-center justify-center bg-background">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-2 border-amber/30 border-t-amber rounded-full animate-spin mx-auto" />
+          <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
+            Reading on-chain role…
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // If they already have a role, send them to their home.
   if (currentRole) {
