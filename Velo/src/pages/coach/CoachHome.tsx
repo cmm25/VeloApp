@@ -42,6 +42,7 @@ import {
   Mail,
   UserPlus,
   ChevronDown,
+  History,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -202,6 +203,12 @@ export default function CoachHome() {
     });
     return Array.from(map.values()).sort((a, b) => b.createdAt - a.createdAt);
   }, [jobs, recent, statusById]);
+
+  // Completed sessions — shown in a dedicated Past Sessions section.
+  const completedJobs = useMemo(
+    () => jobs.filter((j) => j.status === "Completed").sort((a, b) => Number(b.createdAt - a.createdAt)),
+    [jobs],
+  );
 
   // Prune locally-remembered jobs once they settle on-chain so the list stays
   // lean and they fall through to the full sessions list.
@@ -535,6 +542,57 @@ export default function CoachHome() {
                 );
               })}
             </ul>
+          </section>
+        )}
+
+        {/* Past Sessions — completed jobs, each links to the full JobDetail view */}
+        {(completedJobs.length > 0 || isLoading) && (
+          <section className="mt-10">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+              <History className="w-3 h-3 text-amber" />
+              Past sessions · {completedJobs.length}
+            </h2>
+            {isLoading ? (
+              <div className="grid sm:grid-cols-2 gap-3">
+                {[1, 2].map((i) => (
+                  <div key={i} className="h-20 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+                ))}
+              </div>
+            ) : (
+              <ul className="grid sm:grid-cols-2 gap-3">
+                {completedJobs.map((job, i) => {
+                  const athlete = resolve(job.athlete);
+                  const athleteName = athlete?.name ?? `Athlete ${job.athlete.slice(2, 6)}`;
+                  return (
+                    <motion.li
+                      key={job.jobId}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.04 }}
+                    >
+                      <Link
+                        href={`/coach/jobs/${job.jobId}`}
+                        className="flex items-center gap-3 px-4 py-3 bg-card/40 hover:bg-card border border-border/50 hover:border-amber/40 rounded-sm transition-colors group"
+                      >
+                        <AthleteMonogram name={athleteName} size="md" />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm text-chalk truncate font-medium">{athleteName}</div>
+                          <div className="font-mono text-[10px] text-muted-foreground truncate">
+                            {shortAddr(job.jobId, 6, 4)} · {timeUntil(job.createdAt)} ago · {formatStt(job.fee)}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border text-[10px] uppercase tracking-wider font-bold text-amber bg-amber/10 border-amber/30">
+                            <CheckCircle2 className="w-3 h-3" /> Done
+                          </span>
+                          <ChevronRight className="w-4 h-4 text-muted-foreground group-hover:text-amber transition-colors" />
+                        </div>
+                      </Link>
+                    </motion.li>
+                  );
+                })}
+              </ul>
+            )}
           </section>
         )}
 
