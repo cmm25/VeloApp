@@ -33,3 +33,20 @@ export function summaryFromReport(json: unknown): string | null {
   }
   return null;
 }
+
+/** Best-effort extraction of Somnia consensus receipt URL from receipt JSON. */
+export function somniaReceiptUrlFromJson(json: unknown): string | null {
+  if (!json || typeof json !== "object") return null;
+  const j = json as Record<string, unknown>;
+  const provenance =
+    j["provenance"] && typeof j["provenance"] === "object"
+      ? (j["provenance"] as Record<string, unknown>)
+      : null;
+  if (!provenance) return null;
+  const somnia =
+    provenance["somnia"] && typeof provenance["somnia"] === "object"
+      ? (provenance["somnia"] as Record<string, unknown>)
+      : null;
+  const url = somnia?.["receiptUrl"];
+  return typeof url === "string" && url.startsWith("http") ? url : null;
+}

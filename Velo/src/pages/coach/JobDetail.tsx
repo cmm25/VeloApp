@@ -22,6 +22,7 @@ import { ShieldCheck, Clock, AlertTriangle, ArrowLeft } from "lucide-react";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { ReceiptStage, Stage, Row, decodeReceipt } from "@/components/session/ReceiptStage";
 import { TelemetryPreview } from "@/components/session/TelemetryPreview";
+import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 
 export default function JobDetail({ jobId }: { jobId: Hex }) {
   // Live-poll on-chain state until the session reaches a terminal stage so the
@@ -41,6 +42,8 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
 
   const formReceipt = useMemo(() => decodeReceipt(formReceiptRaw), [formReceiptRaw]);
   const rxReceipt = useMemo(() => decodeReceipt(rxReceiptRaw), [rxReceiptRaw]);
+  const { data: rxIpfs } = useIpfsJson(rxReceipt?.ipfsCid);
+  const rxSomniaReceiptUrl = useMemo(() => somniaReceiptUrlFromJson(rxIpfs), [rxIpfs]);
 
   // Indexer-supplied {receipt, signature} — gates the "Verified" badge so we
   // can prove the agent signed each receipt without trusting the orchestrator.
@@ -170,6 +173,10 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
                         agent: rxReceipt.agent,
                         label: "Prescriber",
                         receiptCid: rxReceipt.ipfsCid,
+                        receiptUrl:
+                          indexed?.prescription?.provenance?.path === "native"
+                            ? indexed.prescription.provenance.somnia?.receiptUrl
+                            : rxSomniaReceiptUrl ?? undefined,
                       }
                     : null,
                 ].filter(Boolean) as CompositionNode[]

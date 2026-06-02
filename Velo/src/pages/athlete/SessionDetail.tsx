@@ -13,6 +13,7 @@ import { fetchIndexedReceipts, type IndexedReceipts } from "@/lib/web3/indexer";
 import { ShieldCheck, Clock, ArrowLeft } from "lucide-react";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { ReceiptStage, Stage, Row, decodeReceipt } from "@/components/session/ReceiptStage";
+import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 
 /**
  * Read-only mirror of the coach's Session Detail timeline, scoped to the
@@ -35,6 +36,8 @@ export default function SessionDetail({ jobId }: { jobId: Hex }) {
 
   const formReceipt = useMemo(() => decodeReceipt(formReceiptRaw), [formReceiptRaw]);
   const rxReceipt = useMemo(() => decodeReceipt(rxReceiptRaw), [rxReceiptRaw]);
+  const { data: rxIpfs } = useIpfsJson(rxReceipt?.ipfsCid);
+  const rxSomniaReceiptUrl = useMemo(() => somniaReceiptUrlFromJson(rxIpfs), [rxIpfs]);
 
   // Indexer-supplied {receipt, signature} — gates the "Verified" badge so the
   // athlete can prove each agent signed its receipt, exactly as the coach can.
@@ -150,6 +153,10 @@ export default function SessionDetail({ jobId }: { jobId: Hex }) {
                         agent: rxReceipt.agent,
                         label: "Prescriber",
                         receiptCid: rxReceipt.ipfsCid,
+                        receiptUrl:
+                          indexed?.prescription?.provenance?.path === "native"
+                            ? indexed.prescription.provenance.somnia?.receiptUrl
+                            : rxSomniaReceiptUrl ?? undefined,
                       }
                     : null,
                 ].filter(Boolean) as CompositionNode[]

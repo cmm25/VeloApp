@@ -12,6 +12,7 @@ import { useJobsByIds } from "@/hooks/useVeloContracts";
 import { useAthleteReceipts } from "@/hooks/useVeloContracts";
 import { shortAddr } from "@/lib/format";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
+import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 import { ArrowLeft, ChevronRight, Film, Plus, Trash2, LinkIcon } from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -64,6 +65,12 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
   }
 
   const profile = resolve(athlete);
+  const latestReceipt = receipts.length > 0 ? receipts[receipts.length - 1] : null;
+  const { data: latestRxIpfs } = useIpfsJson(latestReceipt?.ipfsCid);
+  const latestRxSomniaReceiptUrl = useMemo(
+    () => somniaReceiptUrlFromJson(latestRxIpfs),
+    [latestRxIpfs]
+  );
   const athleteJobs = jobs.filter(
     (j) =>
       j.athlete.toLowerCase() === athlete &&
@@ -217,15 +224,16 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
                 [
                   {
                     role: "lead",
-                    agent: receipts[receipts.length - 1]!.formAgent,
+                    agent: latestReceipt!.formAgent,
                     label: "Form agent",
-                    receiptCid: receipts[receipts.length - 1]!.ipfsCid,
+                    receiptCid: latestReceipt!.ipfsCid,
                   },
                   {
                     role: "sub",
-                    agent: receipts[receipts.length - 1]!.prescriptionAgent,
+                    agent: latestReceipt!.prescriptionAgent,
                     label: "Prescriber",
-                    receiptCid: receipts[receipts.length - 1]!.ipfsCid,
+                    receiptCid: latestReceipt!.ipfsCid,
+                    receiptUrl: latestRxSomniaReceiptUrl ?? undefined,
                   },
                 ] as CompositionNode[]
               }

@@ -4,6 +4,27 @@ import { makeLogger } from "../utils/logger.js";
 
 const log = makeLogger("store");
 
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === "object") {
+    const anyErr = err as Record<string, unknown>;
+    const message = typeof anyErr["message"] === "string" ? anyErr["message"] : "";
+    const code = typeof anyErr["code"] === "string" ? anyErr["code"] : "";
+    const details = typeof anyErr["details"] === "string" ? anyErr["details"] : "";
+    const hint = typeof anyErr["hint"] === "string" ? anyErr["hint"] : "";
+    const parts = [message, code && `code=${code}`, details && `details=${details}`, hint && `hint=${hint}`]
+      .filter(Boolean)
+      .join(" | ");
+    if (parts) return parts;
+    try {
+      return JSON.stringify(anyErr);
+    } catch {
+      return String(err);
+    }
+  }
+  return String(err);
+}
+
 function supabaseEnabled(): boolean {
   return !!(config.supabase.url && config.supabase.serviceKey);
 }
@@ -430,7 +451,7 @@ export async function createRosterInvite(
     } catch (err) {
       if (err instanceof Error && err.message === "already_on_roster") throw err;
       log.warn("Supabase roster insert failed (falling back to in-memory)", {
-        error: err instanceof Error ? err.message : String(err),
+        error: describeError(err),
       });
     }
   }
