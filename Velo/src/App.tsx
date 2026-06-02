@@ -5,6 +5,7 @@ import { lazy, Suspense } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { Web3Provider } from "@/components/Web3Provider";
 import { RequireRole, RequireWallet } from "@/components/RoleGate";
+import { FullPageLoader } from "@/components/ui/spinner";
 
 const Landing = lazy(() => import("@/pages/Landing"));
 const ChooseRole = lazy(() => import("@/pages/ChooseRole"));
@@ -21,17 +22,9 @@ const BountyDetail = lazy(() => import("@/pages/bounties/BountyDetail"));
 const DeleteAccount = lazy(() => import("@/pages/DeleteAccount"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
-function RouteFallback() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
-      <div className="w-8 h-8 border-2 border-amber/30 border-t-amber rounded-full animate-spin" />
-    </div>
-  );
-}
-
 function Router() {
   return (
-    <Suspense fallback={<RouteFallback />}>
+    <Suspense fallback={<FullPageLoader />}>
       <Switch>
         <Route path="/" component={Landing} />
         <Route path="/choose-role">

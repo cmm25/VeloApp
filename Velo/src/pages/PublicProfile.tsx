@@ -8,7 +8,6 @@ import { AgentStatusBadge } from "@/components/AgentStatusBadge";
 import { IndexerSourceBadge } from "@/components/IndexerSourceBadge";
 import { AgentActivityStrip } from "@/components/AgentActivityStrip";
 import { useAthleteReceipts, type SbtReceiptRef } from "@/hooks/useVeloContracts";
-import { EmptyState } from "@/components/ui/states";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import { useTapes, formatTapeSize, formatTapeDate } from "@/lib/domain/tapes";
@@ -16,6 +15,7 @@ import { useCoachesForAthlete } from "@/lib/domain/roster";
 import { useIpfsJson, summaryFromReport } from "@/lib/web3/ipfs";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
 import { shortAddr, shortHash } from "@/lib/format";
+import { EmptyState, CardSkeletonList } from "@/components/ui/states";
 import {
   ExternalLink,
   ShieldCheck,
@@ -205,14 +205,7 @@ export default function PublicProfile({ address: addrParam }: { address: string 
             Verified receipt timeline
           </h2>
           {isLoading ? (
-            <div className="space-y-4">
-              {[1, 2].map((i) => (
-                <div
-                  key={i}
-                  className="h-32 bg-card/50 border border-border/50 rounded-sm animate-pulse"
-                />
-              ))}
-            </div>
+            <CardSkeletonList count={2} itemClassName="h-32" className="space-y-4" />
           ) : receipts.length === 0 ? (
             <EmptyState icon={FileText} title="No receipts yet" />
           ) : (
