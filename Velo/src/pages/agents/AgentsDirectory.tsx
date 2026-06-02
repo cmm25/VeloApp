@@ -9,7 +9,7 @@ import {
   type AgentRecord,
 } from "@/lib/domain/agents";
 import { shortAddr, formatStt } from "@/lib/format";
-import { EmptyState } from "@/components/ui/states";
+import { EmptyState, CardSkeleton } from "@/components/ui/states";
 import { Bot, ShieldCheck, ShieldOff, Activity } from "lucide-react";
 
 export default function AgentsDirectory() {
@@ -87,10 +87,7 @@ export default function AgentsDirectory() {
         {isLoading ? (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-40 bg-card/50 border border-border/50 rounded-sm animate-pulse"
-              />
+              <CardSkeleton key={i} className="h-40" />
             ))}
           </div>
         ) : filtered.length === 0 ? (

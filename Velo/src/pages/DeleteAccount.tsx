@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
+import { FullPageLoader } from "@/components/ui/spinner";
 import { useMyOnChainRole } from "@/lib/domain/onchainRole";
 import {
   athleteSbtRoleAbi,
@@ -33,11 +34,7 @@ export default function DeleteAccount() {
   const [confirm, setConfirm] = useState("");
 
   if (isLoading) {
-    return (
-      <div className="min-h-[100dvh] bg-background flex items-center justify-center">
-        <Loader2 className="w-5 h-5 animate-spin text-amber" />
-      </div>
-    );
+    return <FullPageLoader label="Reading on-chain role…" />;
   }
 
   const sbt = deployment?.contracts.athleteSBT;

@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useAccount } from "wagmi";
 import { useLocation } from "wouter";
 import { useAppKit } from "@reown/appkit/react";
-import landingCollage from "../assets/landing-collage.png";
+import landingCollage from "../assets/landing-collage.webp";
 import { motion } from "framer-motion";
 import { Wallet } from "lucide-react";
 

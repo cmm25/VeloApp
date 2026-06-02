@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { TopBar } from "@/components/TopBar";
+import { FullPageLoader } from "@/components/ui/spinner";
 import { shortAddr } from "@/lib/format";
 import { useMyOnChainRole } from "@/lib/domain/onchainRole";
 import {
@@ -50,16 +51,7 @@ export default function ChooseRole() {
   // Hold the screen while the chain query is in-flight — prevents the "Choose
   // a role" UI flashing for accounts that already have an established role.
   if (roleLoading) {
-    return (
-      <div className="min-h-[100dvh] flex items-center justify-center bg-background">
-        <div className="text-center space-y-3">
-          <div className="w-8 h-8 border-2 border-amber/30 border-t-amber rounded-full animate-spin mx-auto" />
-          <p className="text-xs font-mono uppercase tracking-widest text-muted-foreground">
-            Reading on-chain role…
-          </p>
-        </div>
-      </div>
-    );
+    return <FullPageLoader label="Reading on-chain role…" />;
   }
 
   // If they already have a role, send them to their home.
