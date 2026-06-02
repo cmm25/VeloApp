@@ -4,6 +4,7 @@ import { TopBar } from "@/components/TopBar";
 import { useOpenBounties, type Bounty, type BountyStatus } from "@/lib/domain/bounties";
 import { skillLabel } from "@/lib/domain/agents";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
+import { EmptyState, ErrorState } from "@/components/ui/states";
 import { Target, ChevronRight, RefreshCw, AlertTriangle } from "lucide-react";
 
 type SortKey = "newest" | "deadline" | "escrow";
@@ -89,41 +90,26 @@ export default function BountiesBoard() {
             ))}
           </div>
         ) : isError ? (
-          <div className="flex flex-col items-center gap-4 py-16 border border-dashed border-destructive/30 rounded-sm bg-destructive/5">
-            <AlertTriangle className="w-8 h-8 text-destructive/70" />
-            <div className="text-center">
-              <p className="text-sm text-chalk font-medium mb-1">
-                Could not load bounties from the chain
-              </p>
-              <p className="text-xs text-muted-foreground font-mono">
-                The RPC may be rate-limited. Try refreshing.
-              </p>
-            </div>
-            <button
-              onClick={() => refetch()}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-widest border border-amber/40 text-amber hover:bg-amber/10 rounded-sm transition-colors"
-            >
-              <RefreshCw className="w-3 h-3" /> Retry
-            </button>
-          </div>
+          <ErrorState
+            icon={AlertTriangle}
+            title="Could not load bounties from the chain"
+            description="The RPC may be rate-limited. Try refreshing."
+            onRetry={() => refetch()}
+          />
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center gap-4 py-16 border border-dashed border-border/50 rounded-sm bg-card/20">
-            <Target className="w-8 h-8 text-muted-foreground/50" />
-            <div className="text-center">
-              <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground mb-2">
-                No bounties match
-              </p>
-              <p className="text-[10px] font-mono text-muted-foreground/60">
-                If you just posted one, wait a block and refresh.
-              </p>
-            </div>
-            <button
-              onClick={() => refetch()}
-              className="inline-flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border border-border/40 text-muted-foreground hover:border-amber/40 hover:text-amber rounded-sm transition-colors"
-            >
-              <RefreshCw className="w-3 h-3" /> Refresh
-            </button>
-          </div>
+          <EmptyState
+            icon={Target}
+            title="No bounties match"
+            description="If you just posted one, wait a block and refresh."
+            action={
+              <button
+                onClick={() => refetch()}
+                className="inline-flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border border-border/40 text-muted-foreground hover:border-amber/40 hover:text-amber rounded-sm transition-colors"
+              >
+                <RefreshCw className="w-3 h-3" /> Refresh
+              </button>
+            }
+          />
         ) : (
           <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
             {filtered.map((b) => (

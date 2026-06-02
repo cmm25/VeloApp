@@ -8,6 +8,20 @@ import { AlertCircle } from "lucide-react";
 
 type NavLink = { href: string; label: string; match: (l: string) => boolean };
 
+// Warm the lazy route chunk on hover/focus so the click-to-render feels instant.
+// Vite dedupes these specifiers with the `lazy()` imports in App.tsx, so this
+// only triggers the network fetch early — it doesn't double-load.
+const ROUTE_PREFETCH: Record<string, () => void> = {
+  "/coach": () => void import("@/pages/coach/CoachHome"),
+  "/athlete": () => void import("@/pages/athlete/AthleteHome"),
+  "/agents": () => void import("@/pages/agents/AgentsDirectory"),
+  "/bounties": () => void import("@/pages/bounties/BountiesBoard"),
+};
+
+function prefetchRoute(href: string) {
+  ROUTE_PREFETCH[href]?.();
+}
+
 export function TopBar() {
   const isDeployed = useIsDeployed();
   const showBanner = !isDeployed || !isWalletConnectConfigured;
@@ -73,6 +87,8 @@ export function TopBar() {
                     key={n.href}
                     href={n.href}
                     aria-current={active ? "page" : undefined}
+                    onMouseEnter={() => prefetchRoute(n.href)}
+                    onFocus={() => prefetchRoute(n.href)}
                     className={`relative text-[11px] font-bold uppercase tracking-widest transition-colors ${
                       active ? "text-amber" : "text-muted-foreground hover:text-chalk"
                     }`}

@@ -8,6 +8,7 @@ import { AgentStatusBadge } from "@/components/AgentStatusBadge";
 import { IndexerSourceBadge } from "@/components/IndexerSourceBadge";
 import { AgentActivityStrip } from "@/components/AgentActivityStrip";
 import { useAthleteReceipts, type SbtReceiptRef } from "@/hooks/useVeloContracts";
+import { EmptyState } from "@/components/ui/states";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import { useTapes, formatTapeSize, formatTapeDate } from "@/lib/domain/tapes";
@@ -213,14 +214,7 @@ export default function PublicProfile({ address: addrParam }: { address: string 
               ))}
             </div>
           ) : receipts.length === 0 ? (
-            <div className="text-center py-16 border border-dashed border-border/50 rounded-sm bg-card/20">
-              <div className="w-16 h-16 bg-card border border-border/50 rounded-full flex items-center justify-center mx-auto mb-6">
-                <FileText className="w-6 h-6 text-muted-foreground" />
-              </div>
-              <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-                No receipts yet
-              </p>
-            </div>
+            <EmptyState icon={FileText} title="No receipts yet" />
           ) : (
             <div className="space-y-4">
               {receipts
