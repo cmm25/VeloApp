@@ -1,8 +1,9 @@
 import { useMemo } from "react";
 import { useReadContract, useReadContracts, usePublicClient } from "wagmi";
 import { useQuery } from "@tanstack/react-query";
-import type { Address, Hex } from "viem";
+import type { Address, Hex, AbiEvent } from "viem";
 import { agentRegistryAbi, reputationAbi } from "@/lib/web3/abis";
+import { getRecentLogs } from "@/lib/web3/logs";
 import {
   agentRegistryAddress,
   reputationAddress,
@@ -139,13 +140,14 @@ export function useAgentActivity(address?: Address) {
         (x) => x.type === "event" && x.name === "ReputationCredited",
       );
       if (!event) return [] as { blockNumber: bigint; ts: number }[];
-      const logs = await client!.getLogs({
+      // Somnia caps `eth_getLogs` at 1000-block windows, so a from-genesis scan
+      // is impossible. Scan a bounded recent window instead — this strip only
+      // visualizes *recent* reputation activity.
+      const logs = (await getRecentLogs(client!, {
         address: rep!,
-        event: event as never,
-        args: { agent: address } as never,
-        fromBlock: 0n,
-        toBlock: "latest",
-      });
+        event: event as AbiEvent,
+        args: { agent: address },
+      })) as Array<{ blockNumber: bigint }>;
       const out: { blockNumber: bigint; ts: number }[] = [];
       for (const raw of logs) {
         const l = raw as unknown as { blockNumber: bigint };

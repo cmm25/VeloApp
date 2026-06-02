@@ -196,16 +196,3 @@ export function StatusBadge({ status }: { status: BountyStatus }) {
     </span>
   );
 }
-
-function EmptyState() {
-  return (
-    <div className="text-center py-20 border border-dashed border-border/50 rounded-sm bg-card/20">
-      <div className="w-14 h-14 bg-card border border-border/50 rounded-full flex items-center justify-center mx-auto mb-5">
-        <Target className="w-5 h-5 text-muted-foreground" />
-      </div>
-      <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-        No bounties match
-      </p>
-    </div>
-  );
-}

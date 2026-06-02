@@ -396,7 +396,7 @@ function Timeline({ entries }: { entries: TimelineEntry[] }) {
             </div>
           </div>
           <div className="text-[10px] font-mono text-muted-foreground shrink-0">
-            blk {e.blockNumber.toString()}
+            {e.ts > 0 ? new Date(e.ts * 1000).toLocaleString() : "—"}
           </div>
         </li>
       ))}

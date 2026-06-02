@@ -7,7 +7,8 @@ import {
   useWriteContract,
 } from "wagmi";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { Address, Hex } from "viem";
+import type { Address, Hex, AbiEvent } from "viem";
+import { getRecentLogs } from "@/lib/web3/logs";
 import { veloOrchestratorAbi, athleteSbtAbi } from "@/lib/web3/abis";
 import { deployment } from "@/lib/web3/deployment";
 import { somniaTestnet } from "@/lib/web3/chain";
@@ -205,8 +206,13 @@ export function usePrescriptionReceipt(
 }
 
 /**
- * My Jobs — derived from indexed JobRequested logs filtered by `coach`.
- * Reads back current status for each.
+ * My Jobs — derived from recent JobRequested logs filtered by `coach`.
+ *
+ * Somnia caps `eth_getLogs` at 1000-block windows, so a from-genesis scan is
+ * impossible; this scans only a bounded recent window. For the authoritative,
+ * scan-free history of a coach's *completed* sessions, prefer deriving job ids
+ * from athlete SBT receipts (`useAthletesReceiptJobIds`) and reading them via
+ * `useJobsByIds`. This hook remains for recent-activity lookups.
  */
 export function useMyJobs(coach?: Address) {
   const client = usePublicClient({ chainId: somniaTestnet.id });
@@ -221,12 +227,10 @@ export function useMyJobs(coach?: Address) {
         (x) => x.type === "event" && x.name === "JobRequested",
       );
       if (!event) return [] as Job["jobId"][];
-      const logs = await client!.getLogs({
+      const logs = await getRecentLogs(client!, {
         address: orch!,
-        event: event as never,
-        args: { coach } as never,
-        fromBlock: 0n,
-        toBlock: "latest",
+        event: event as AbiEvent,
+        args: { coach },
       });
       return logs.map((l) => (l as unknown as { args: { jobId: Hex } }).args.jobId);
     },
@@ -379,6 +383,83 @@ export function useAthleteReceipts(
     refetch: () => {
       countQ.refetch();
       listQ.refetch();
+    },
+  };
+}
+
+/**
+ * Discover every jobId attached to a set of athletes' SBTs, with no event scan.
+ *
+ * Jobs are content-hashed (no on-chain counter to enumerate) and Somnia caps
+ * `eth_getLogs` at 1000 blocks, so a coach's *completed* sessions can't be found
+ * by scanning `JobRequested` from genesis. The Athlete SBT, however, appends a
+ * `ReceiptRef` (carrying its jobId) for every completed session, so we read each
+ * athlete's `receiptCount` then multicall `receiptAt(athlete, i)` to recover the
+ * full set of jobIds. The caller re-reads `getJob` on these (via `useJobsByIds`)
+ * and filters to the jobs where it is the coach.
+ *
+ * Pass a stable (memoized) `athletes` array to avoid needless refetches.
+ */
+export function useAthletesReceiptJobIds(athletes: Address[]) {
+  const sbt = sbtAddress();
+
+  const countsQ = useReadContracts({
+    contracts: athletes.map((a) => ({
+      address: sbt!,
+      abi: athleteSbtAbi,
+      functionName: "receiptCount" as const,
+      args: [a] as const,
+    })),
+    query: { enabled: !!sbt && athletes.length > 0 },
+  });
+
+  const pairs = useMemo<{ athlete: Address; index: number }[]>(() => {
+    if (!countsQ.data) return [];
+    const out: { athlete: Address; index: number }[] = [];
+    countsQ.data.forEach((res, i) => {
+      if (res.status === "success") {
+        const n = Number(res.result as bigint);
+        for (let k = 0; k < n; k++) out.push({ athlete: athletes[i]!, index: k });
+      }
+    });
+    return out;
+  }, [countsQ.data, athletes]);
+
+  const refsQ = useReadContracts({
+    contracts: pairs.map((p) => ({
+      address: sbt!,
+      abi: athleteSbtAbi,
+      functionName: "receiptAt" as const,
+      args: [p.athlete, BigInt(p.index)] as const,
+    })),
+    query: { enabled: !!sbt && pairs.length > 0, placeholderData: keepPreviousData },
+  });
+
+  const jobIds = useMemo<Hex[]>(() => {
+    if (!refsQ.data) return [];
+    const seen = new Set<string>();
+    const out: Hex[] = [];
+    refsQ.data.forEach((res) => {
+      if (res.status === "success" && res.result) {
+        const ref = res.result as unknown as SbtReceiptRef;
+        const id = ref.jobId;
+        if (id && !seen.has(id.toLowerCase())) {
+          seen.add(id.toLowerCase());
+          out.push(id);
+        }
+      }
+    });
+    return out;
+  }, [refsQ.data]);
+
+  return {
+    jobIds,
+    isLoading:
+      (athletes.length > 0 && countsQ.isLoading) ||
+      (pairs.length > 0 && refsQ.isLoading),
+    refetch: () => {
+      countsQ.refetch();
+      refsQ.refetch();
     },
   };
 }
