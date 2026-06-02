@@ -305,3 +305,395 @@ export async function upsertAthlete(address: string, name: string): Promise<ApiA
 
   return record;
 }
+
+/**
+ * Resolves a wallet's display name from the shared directory, or null.
+ * Checks the in-memory directory first, then Supabase when configured.
+ */
+async function resolveDisplayName(address: string): Promise<string | null> {
+  const owner = address.toLowerCase();
+  const local = _athletes.get(owner);
+  if (local) return local.name;
+
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data, error } = await supabase
+        .from("athletes")
+        .select("display_name")
+        .eq("wallet_address", owner)
+        .single();
+      if (error || !data) return null;
+      return (data.display_name as string | null) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+// ── Roster + invite requests ────────────────────────────────────────────────
+// Off-chain coach↔athlete links. A coach invites an athlete by wallet address,
+// which creates a `pending` row; the athlete accepts (→ `active`) or declines
+// (→ deleted). Shapes mirror Velo/src/lib/domain/roster.ts (RosterEntry,
+// RosterRequest, CoachLink).
+export type RosterRow = {
+  id: number;
+  coachAddress: string;
+  athleteAddress: string;
+  label: string | null;
+  source: string;
+  inviteId: string | null;
+  status: "active" | "pending";
+  createdAt: string;
+  acceptedAt: string | null;
+};
+
+export type RosterEntry = RosterRow & { athleteName: string | null };
+export type RosterRequest = {
+  id: number;
+  coachAddress: string;
+  coachName: string | null;
+  label: string | null;
+  source: string;
+  createdAt: string;
+};
+export type CoachLink = {
+  coachAddress: string;
+  coachName: string | null;
+  source: string;
+  createdAt: string;
+};
+
+export type RosterMutationResult = "ok" | "not_found" | "forbidden";
+
+const _roster: RosterRow[] = [];
+let _rosterSeq = 1;
+
+function rowToRoster(row: Record<string, unknown>): RosterRow {
+  return {
+    id: Number(row["id"]),
+    coachAddress: String(row["coach_address"]).toLowerCase(),
+    athleteAddress: String(row["athlete_address"]).toLowerCase(),
+    label: (row["label"] as string | null) ?? null,
+    source: String(row["source"] ?? "address"),
+    inviteId: (row["invite_id"] as string | null) ?? null,
+    status: (String(row["status"]) === "active" ? "active" : "pending"),
+    createdAt: String(row["created_at"]),
+    acceptedAt: (row["accepted_at"] as string | null) ?? null,
+  };
+}
+
+async function withAthleteName(row: RosterRow): Promise<RosterEntry> {
+  return { ...row, athleteName: await resolveDisplayName(row.athleteAddress) };
+}
+
+/**
+ * Creates a pending invite from coach→athlete. Throws "already_on_roster" if a
+ * row (active or pending) already exists for that pair.
+ */
+export async function createRosterInvite(
+  coachAddress: string,
+  athleteAddress: string,
+  label: string | null
+): Promise<RosterEntry> {
+  const coach = coachAddress.toLowerCase();
+  const athlete = athleteAddress.toLowerCase();
+  const now = new Date().toISOString();
+
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data: existing, error: selErr } = await supabase
+        .from("roster")
+        .select("id")
+        .eq("coach_address", coach)
+        .eq("athlete_address", athlete)
+        .maybeSingle();
+      if (selErr) throw selErr;
+      if (existing) throw new Error("already_on_roster");
+      const { data, error } = await supabase
+        .from("roster")
+        .insert({
+          coach_address: coach,
+          athlete_address: athlete,
+          label: label ?? null,
+          source: "address",
+          status: "pending",
+          created_at: now,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+      return withAthleteName(rowToRoster(data));
+    } catch (err) {
+      if (err instanceof Error && err.message === "already_on_roster") throw err;
+      log.warn("Supabase roster insert failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  if (_roster.some((r) => r.coachAddress === coach && r.athleteAddress === athlete)) {
+    throw new Error("already_on_roster");
+  }
+  const row: RosterRow = {
+    id: _rosterSeq++,
+    coachAddress: coach,
+    athleteAddress: athlete,
+    label: label ?? null,
+    source: "address",
+    inviteId: null,
+    status: "pending",
+    createdAt: now,
+    acceptedAt: null,
+  };
+  _roster.push(row);
+  return withAthleteName(row);
+}
+
+async function listRosterByCoach(
+  coachAddress: string,
+  status: "active" | "pending"
+): Promise<RosterEntry[]> {
+  const coach = coachAddress.toLowerCase();
+
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data, error } = await supabase
+        .from("roster")
+        .select("*")
+        .eq("coach_address", coach)
+        .eq("status", status)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return Promise.all(
+        ((data ?? []) as RosterRow[]).map((r) => withAthleteName(rowToRoster(r))),
+      );
+    } catch (err) {
+      log.warn("Supabase roster list failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const rows = _roster
+    .filter((r) => r.coachAddress === coach && r.status === status)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return Promise.all(rows.map(withAthleteName));
+}
+
+export function listCoachRoster(coachAddress: string): Promise<RosterEntry[]> {
+  return listRosterByCoach(coachAddress, "active");
+}
+
+export function listCoachPendingRoster(coachAddress: string): Promise<RosterEntry[]> {
+  return listRosterByCoach(coachAddress, "pending");
+}
+
+/**
+ * Removes any roster row (active or pending) for the coach+athlete pair.
+ * Only the owning coach may remove. Returns "ok" | "not_found".
+ */
+export async function removeRosterEntry(
+  coachAddress: string,
+  athleteAddress: string
+): Promise<RosterMutationResult> {
+  const coach = coachAddress.toLowerCase();
+  const athlete = athleteAddress.toLowerCase();
+
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data: existing, error: selErr } = await supabase
+        .from("roster")
+        .select("id")
+        .eq("coach_address", coach)
+        .eq("athlete_address", athlete)
+        .maybeSingle();
+      if (selErr) throw selErr;
+      if (!existing) return "not_found";
+      const { error } = await supabase.from("roster").delete().eq("id", existing.id);
+      if (error) throw error;
+      return "ok";
+    } catch (err) {
+      log.warn("Supabase roster delete failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const idx = _roster.findIndex(
+    (r) => r.coachAddress === coach && r.athleteAddress === athlete
+  );
+  if (idx === -1) return "not_found";
+  _roster.splice(idx, 1);
+  return "ok";
+}
+
+async function listCoachLinks(athleteAddress: string): Promise<CoachLink[]> {
+  const athlete = athleteAddress.toLowerCase();
+
+  let rows: RosterRow[];
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data, error } = await supabase
+        .from("roster")
+        .select("*")
+        .eq("athlete_address", athlete)
+        .eq("status", "active")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      rows = (data ?? []).map(rowToRoster);
+    } catch (err) {
+      log.warn("Supabase coach-link list failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      rows = _roster.filter((r) => r.athleteAddress === athlete && r.status === "active");
+    }
+  } else {
+    rows = _roster
+      .filter((r) => r.athleteAddress === athlete && r.status === "active")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  return Promise.all(
+    rows.map(async (r) => ({
+      coachAddress: r.coachAddress,
+      coachName: await resolveDisplayName(r.coachAddress),
+      source: r.source,
+      createdAt: r.acceptedAt ?? r.createdAt,
+    }))
+  );
+}
+
+/** Public + athlete-facing: active coaches linked to an athlete. */
+export function listCoachesForAthlete(athleteAddress: string): Promise<CoachLink[]> {
+  return listCoachLinks(athleteAddress);
+}
+
+/** Athlete-facing: incoming pending invites for an athlete. */
+export async function listAthleteRosterRequests(
+  athleteAddress: string
+): Promise<RosterRequest[]> {
+  const athlete = athleteAddress.toLowerCase();
+
+  let rows: RosterRow[];
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data, error } = await supabase
+        .from("roster")
+        .select("*")
+        .eq("athlete_address", athlete)
+        .eq("status", "pending")
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      rows = (data ?? []).map(rowToRoster);
+    } catch (err) {
+      log.warn("Supabase roster-request list failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      rows = _roster.filter((r) => r.athleteAddress === athlete && r.status === "pending");
+    }
+  } else {
+    rows = _roster
+      .filter((r) => r.athleteAddress === athlete && r.status === "pending")
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  return Promise.all(
+    rows.map(async (r) => ({
+      id: r.id,
+      coachAddress: r.coachAddress,
+      coachName: await resolveDisplayName(r.coachAddress),
+      label: r.label,
+      source: r.source,
+      createdAt: r.createdAt,
+    }))
+  );
+}
+
+/**
+ * Athlete accepts a pending invite addressed to them. Only the athlete the
+ * invite targets may accept. Returns "ok" | "not_found" | "forbidden".
+ */
+export async function acceptRosterRequest(
+  id: number,
+  athleteAddress: string
+): Promise<RosterMutationResult> {
+  const athlete = athleteAddress.toLowerCase();
+  const now = new Date().toISOString();
+
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data: existing, error: selErr } = await supabase
+        .from("roster")
+        .select("athlete_address, status")
+        .eq("id", id)
+        .maybeSingle();
+      if (selErr) throw selErr;
+      if (!existing) return "not_found";
+      if (String(existing.athlete_address).toLowerCase() !== athlete) return "forbidden";
+      const { error } = await supabase
+        .from("roster")
+        .update({ status: "active", accepted_at: now })
+        .eq("id", id);
+      if (error) throw error;
+      return "ok";
+    } catch (err) {
+      log.warn("Supabase roster accept failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const row = _roster.find((r) => r.id === id);
+  if (!row) return "not_found";
+  if (row.athleteAddress !== athlete) return "forbidden";
+  row.status = "active";
+  row.acceptedAt = now;
+  return "ok";
+}
+
+/**
+ * Athlete declines a pending invite addressed to them (deletes the row). Only
+ * the athlete the invite targets may decline. Returns the mutation result.
+ */
+export async function declineRosterRequest(
+  id: number,
+  athleteAddress: string
+): Promise<RosterMutationResult> {
+  const athlete = athleteAddress.toLowerCase();
+
+  if (supabaseEnabled()) {
+    try {
+      const supabase = await getSupabase();
+      const { data: existing, error: selErr } = await supabase
+        .from("roster")
+        .select("athlete_address")
+        .eq("id", id)
+        .maybeSingle();
+      if (selErr) throw selErr;
+      if (!existing) return "not_found";
+      if (String(existing.athlete_address).toLowerCase() !== athlete) return "forbidden";
+      const { error } = await supabase.from("roster").delete().eq("id", id);
+      if (error) throw error;
+      return "ok";
+    } catch (err) {
+      log.warn("Supabase roster decline failed (falling back to in-memory)", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const idx = _roster.findIndex((r) => r.id === id);
+  if (idx === -1) return "not_found";
+  if (_roster[idx].athleteAddress !== athlete) return "forbidden";
+  _roster.splice(idx, 1);
+  return "ok";
+}

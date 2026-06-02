@@ -88,6 +88,30 @@ CREATE TABLE IF NOT EXISTS tapes (
 CREATE INDEX IF NOT EXISTS idx_tapes_wallet  ON tapes (wallet_address);
 CREATE INDEX IF NOT EXISTS idx_tapes_created ON tapes (created_at);
 
+-- ── roster ───────────────────────────────────────────────────────────────────
+-- Off-chain coach↔athlete links. A coach invites an athlete by wallet address,
+-- creating a `pending` row; the athlete accepts (→ `active`) or declines (row
+-- deleted). Reads are public (frontend reads coaches-for-athlete directly);
+-- writes go through the agent runner's SIWE-authenticated /api/roster + /api/me
+-- routes (service key), so only the relevant coach/athlete may mutate a row.
+CREATE TABLE IF NOT EXISTS roster (
+    id              BIGSERIAL PRIMARY KEY,
+    coach_address   TEXT NOT NULL,
+    athlete_address TEXT NOT NULL,
+    label           TEXT,                       -- private coach label
+    source          TEXT NOT NULL DEFAULT 'address',
+    invite_id       TEXT,                       -- reserved (legacy invite link)
+    status          TEXT NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'active')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    accepted_at     TIMESTAMPTZ,
+    UNIQUE (coach_address, athlete_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_roster_coach   ON roster (coach_address);
+CREATE INDEX IF NOT EXISTS idx_roster_athlete ON roster (athlete_address);
+CREATE INDEX IF NOT EXISTS idx_roster_status  ON roster (status);
+
 -- ── telemetry ────────────────────────────────────────────────────────────────
 -- Raw MediaPipe output per job (off-chain only — too large for IPFS/chain).
 -- Full TennisTelemetry JSON from velo-engine.
@@ -172,6 +196,7 @@ ALTER TABLE receipts        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE jobs            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE athletes        ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tapes           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE roster          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE telemetry       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE agent_runs      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE upload_sessions ENABLE ROW LEVEL SECURITY;
@@ -191,6 +216,10 @@ CREATE POLICY "athletes_read_public" ON athletes
 
 DROP POLICY IF EXISTS "tapes_read_public" ON tapes;
 CREATE POLICY "tapes_read_public" ON tapes
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "roster_read_public" ON roster;
+CREATE POLICY "roster_read_public" ON roster
     FOR SELECT USING (true);
 
 -- telemetry, agent_runs and upload_sessions have RLS enabled but NO policies,

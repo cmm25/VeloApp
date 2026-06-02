@@ -19,15 +19,11 @@ import { VerifiedBadge } from "@/components/VerifiedBadge";
 import { useAthleteDirectory } from "@/lib/domain/athletes";
 import {
   useCoachRoster,
-  useCoachInvites,
   useCoachPendingRoster,
-  useRevokeInvite,
   useAddRosterByAddress,
   useRemoveRoster,
   type RosterEntry,
-  type CoachInvite,
 } from "@/lib/domain/roster";
-import { InviteAthleteModal } from "@/components/InviteAthleteModal";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
 import {
@@ -39,7 +35,6 @@ import {
   Activity,
   AlertTriangle,
   X,
-  Mail,
   UserPlus,
   ChevronDown,
   History,
@@ -113,19 +108,14 @@ export default function CoachHome() {
   const { writeContractAsync, isPending: cancelling } = useCancelExpired();
   const publicClient = usePublicClient({ chainId: somniaTestnet.id });
   const [cancellingId, setCancellingId] = useState<string | null>(null);
-  const [inviteOpen, setInviteOpen] = useState(false);
   const { resolve, ensure } = useAthleteDirectory();
 
   const rosterQ = useCoachRoster(!!address);
   const pendingRosterQ = useCoachPendingRoster(!!address);
-  const invitesQ = useCoachInvites(!!address);
-  const revoke = useRevokeInvite();
   const removeRoster = useRemoveRoster();
   const addByAddress = useAddRosterByAddress();
   const roster: RosterEntry[] = rosterQ.data ?? [];
   const pendingRoster: RosterEntry[] = pendingRosterQ.data ?? [];
-  const invites: CoachInvite[] = invitesQ.data ?? [];
-  const pendingInvites = invites.filter((i) => !i.claimedAt && !i.revokedAt);
 
   // Sessions are reconstructed WITHOUT any event-log scan: Somnia caps
   // `eth_getLogs` at 1000 blocks and jobIds are content-hashed (no counter to
@@ -321,16 +311,6 @@ export default function CoachHome() {
     }
   };
 
-  const handleRevoke = async (id: string) => {
-    if (!confirm("Revoke this pending invite? The link will no longer work.")) return;
-    try {
-      await revoke.mutateAsync(id);
-      toast.success("Invite revoked");
-    } catch (err) {
-      toast.error("Revoke failed", { description: err instanceof Error ? err.message : String(err) });
-    }
-  };
-
   return (
     <div className="min-h-[100dvh] flex flex-col bg-background selection:bg-amber/30 selection:text-amber">
       <TopBar />
@@ -350,12 +330,6 @@ export default function CoachHome() {
               title="Send a roster request to an existing wallet"
             >
               <UserPlus className="w-4 h-4" /> Add by address
-            </button>
-            <button
-              onClick={() => setInviteOpen(true)}
-              className="inline-flex items-center gap-2 bg-card hover:bg-border/40 border border-border/60 text-chalk px-4 py-2.5 font-bold tracking-wide rounded-sm text-sm"
-            >
-              <Mail className="w-4 h-4" /> Invite by email
             </button>
             <button
               onClick={() => setLocation("/coach/new")}
@@ -419,14 +393,14 @@ export default function CoachHome() {
                   Build your roster
                 </div>
                 <p className="text-sm text-muted-foreground font-light">
-                  Invite an athlete by email — they'll claim a wallet and start owning their record.
+                  Add an athlete by their wallet address — they'll accept on their dashboard and start owning their record.
                 </p>
               </div>
               <button
-                onClick={() => setInviteOpen(true)}
+                onClick={() => setAddOpen(true)}
                 className="inline-flex items-center gap-2 bg-amber hover:bg-amber-soft text-ink px-4 py-2.5 font-bold tracking-wide rounded-sm shrink-0"
               >
-                <UserPlus className="w-4 h-4" /> Invite first athlete
+                <UserPlus className="w-4 h-4" /> Add first athlete
               </button>
             </div>
           ) : (
@@ -456,11 +430,11 @@ export default function CoachHome() {
               })}
               <li className="shrink-0">
                 <button
-                  onClick={() => setInviteOpen(true)}
+                  onClick={() => setAddOpen(true)}
                   className="flex items-center gap-2 px-4 py-3 bg-card/20 hover:bg-card/40 border border-dashed border-border/50 hover:border-amber/50 rounded-sm w-40 h-full justify-center text-muted-foreground hover:text-amber"
                 >
                   <UserPlus className="w-4 h-4" />
-                  <span className="text-[11px] uppercase tracking-widest font-bold">Invite</span>
+                  <span className="text-[11px] uppercase tracking-widest font-bold">Add</span>
                 </button>
               </li>
             </ul>
@@ -496,35 +470,6 @@ export default function CoachHome() {
                   </li>
                 );
               })}
-            </ul>
-          </section>
-        )}
-
-        {/* Pending invites */}
-        {pendingInvites.length > 0 && (
-          <section className="mb-10">
-            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
-              Pending invites · {pendingInvites.length}
-            </h2>
-            <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
-              {pendingInvites.map((inv) => (
-                <li key={inv.id} className="flex items-center gap-4 px-4 py-3">
-                  <Mail className="w-4 h-4 text-amber/70 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-chalk truncate">{inv.displayName}</div>
-                    <div className="text-[10px] font-mono text-muted-foreground truncate">
-                      {inv.email} · expires {new Date(inv.expiresAt).toLocaleDateString()}
-                    </div>
-                  </div>
-                  <button
-                    onClick={() => handleRevoke(inv.id)}
-                    disabled={revoke.isPending}
-                    className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground hover:text-destructive px-2 py-1 border border-border/50 hover:border-destructive/40 rounded-sm transition-colors disabled:opacity-50"
-                  >
-                    Revoke
-                  </button>
-                </li>
-              ))}
             </ul>
           </section>
         )}
@@ -736,8 +681,6 @@ export default function CoachHome() {
           </details>
         </section>
       </main>
-
-      {inviteOpen && <InviteAthleteModal onClose={() => setInviteOpen(false)} />}
     </div>
   );
 }
