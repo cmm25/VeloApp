@@ -4,8 +4,8 @@ import { TopBar } from "@/components/TopBar";
 import { useOpenBounties, type Bounty, type BountyStatus } from "@/lib/domain/bounties";
 import { skillLabel } from "@/lib/domain/agents";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
-import { EmptyState, ErrorState } from "@/components/ui/states";
-import { Target, ChevronRight, RefreshCw, AlertTriangle } from "lucide-react";
+import { EmptyState, ErrorState, CardSkeletonList } from "@/components/ui/states";
+import { Target, ChevronRight } from "lucide-react";
 
 type SortKey = "newest" | "deadline" | "escrow";
 const STATUSES: BountyStatus[] = ["Open", "Accepted", "Settled", "Expired"];
@@ -81,17 +81,9 @@ export default function BountiesBoard() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-3">
-            {[1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-20 bg-card/50 border border-border/50 rounded-sm animate-pulse"
-              />
-            ))}
-          </div>
+          <CardSkeletonList count={3} itemClassName="h-20" />
         ) : isError ? (
           <ErrorState
-            icon={AlertTriangle}
             title="Could not load bounties from the chain"
             description="The RPC may be rate-limited. Try refreshing."
             onRetry={() => refetch()}
@@ -106,7 +98,7 @@ export default function BountiesBoard() {
                 onClick={() => refetch()}
                 className="inline-flex items-center gap-2 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest border border-border/40 text-muted-foreground hover:border-amber/40 hover:text-amber rounded-sm transition-colors"
               >
-                <RefreshCw className="w-3 h-3" /> Refresh
+                Refresh
               </button>
             }
           />
