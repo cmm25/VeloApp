@@ -9,6 +9,7 @@ import {
   type AgentRecord,
 } from "@/lib/domain/agents";
 import { shortAddr, formatStt } from "@/lib/format";
+import { EmptyState } from "@/components/ui/states";
 import { Bot, ShieldCheck, ShieldOff, Activity } from "lucide-react";
 
 export default function AgentsDirectory() {
@@ -93,7 +94,11 @@ export default function AgentsDirectory() {
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <EmptyState />
+          <EmptyState
+            icon={Bot}
+            title="No agents registered yet"
+            description="Operators register their endpoints + skills on the AgentRegistry contract. Once they do, they show up here."
+          />
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map((a) => (
@@ -188,21 +193,4 @@ function timeUntilPast(ts: bigint): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function EmptyState() {
-  return (
-    <div className="text-center py-20 border border-dashed border-border/50 rounded-sm bg-card/20">
-      <div className="w-14 h-14 bg-card border border-border/50 rounded-full flex items-center justify-center mx-auto mb-5">
-        <Bot className="w-5 h-5 text-muted-foreground" />
-      </div>
-      <p className="font-mono text-[11px] uppercase tracking-widest text-muted-foreground">
-        No agents registered yet
-      </p>
-      <p className="text-xs text-muted-foreground font-light mt-2 max-w-sm mx-auto">
-        Operators register their endpoints + skills on the AgentRegistry
-        contract. Once they do, they show up here.
-      </p>
-    </div>
-  );
 }
