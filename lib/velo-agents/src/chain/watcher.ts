@@ -225,6 +225,81 @@ async function startPollingWatcher(handlers: WatcherHandlers): Promise<() => voi
 
   let running = true;
 
+  const jobTopic = ethers.id(
+    "JobRequested(bytes32,address,address,string,uint256,uint64)",
+  );
+  const formTopic = ethers.id(
+    "FormReceiptSubmitted(bytes32,address,string,bytes32,string)",
+  );
+
+  const scanWindow = async (fromBlock: number, toBlock: number) => {
+    const jobLogs = await provider.getLogs({
+      address: orchAddress,
+      topics: [jobTopic],
+      fromBlock,
+      toBlock,
+    });
+
+    for (const raw of jobLogs) {
+      try {
+        const parsed = orch.interface.parseLog({
+          topics: raw.topics as string[],
+          data: raw.data,
+        });
+        if (!parsed) continue;
+        const { jobId, coach, athlete, videoCid, fee, deadline } = parsed.args;
+        log.info("POLL: JobRequested", {
+          jobId,
+          athlete,
+          videoCid,
+          block: raw.blockNumber,
+        });
+        await handlers.onJobRequested({
+          jobId,
+          coach,
+          athlete,
+          videoCid,
+          fee: BigInt(fee),
+          deadline: BigInt(deadline),
+        });
+      } catch (err) {
+        log.error("Failed to parse JobRequested log", err);
+      }
+    }
+
+    const formLogs = await provider.getLogs({
+      address: orchAddress,
+      topics: [formTopic],
+      fromBlock,
+      toBlock,
+    });
+
+    for (const raw of formLogs) {
+      try {
+        const parsed = orch.interface.parseLog({
+          topics: raw.topics as string[],
+          data: raw.data,
+        });
+        if (!parsed) continue;
+        const { jobId, agent, ipfsCid, summaryHash, summary } = parsed.args;
+        log.info("POLL: FormReceiptSubmitted", {
+          jobId,
+          agent,
+          block: raw.blockNumber,
+        });
+        await handlers.onFormReceiptSubmitted({
+          jobId,
+          agent,
+          ipfsCid,
+          summaryHash,
+          summary,
+        });
+      } catch (err) {
+        log.error("Failed to parse FormReceiptSubmitted log", err);
+      }
+    }
+  };
+
   const poll = async () => {
     while (running) {
       try {
@@ -234,76 +309,18 @@ async function startPollingWatcher(handlers: WatcherHandlers): Promise<() => voi
           continue;
         }
 
-        const fromBlock = lastBlock + 1;
-        const toBlock = current;
-
-        const jobLogs = await provider.getLogs({
-          address: orchAddress,
-          topics: [ethers.id("JobRequested(bytes32,address,address,string,uint256,uint64)")],
-          fromBlock,
-          toBlock,
-        });
-
-        for (const raw of jobLogs) {
-          try {
-            const parsed = orch.interface.parseLog({
-              topics: raw.topics as string[],
-              data: raw.data,
-            });
-            if (!parsed) continue;
-            const { jobId, coach, athlete, videoCid, fee, deadline } = parsed.args;
-            log.info("POLL: JobRequested", {
-              jobId,
-              athlete,
-              videoCid,
-              block: raw.blockNumber,
-            });
-            await handlers.onJobRequested({
-              jobId,
-              coach,
-              athlete,
-              videoCid,
-              fee: BigInt(fee),
-              deadline: BigInt(deadline),
-            });
-          } catch (err) {
-            log.error("Failed to parse JobRequested log", err);
-          }
+        // Somnia rejects any `eth_getLogs` range wider than 1000 blocks, so a
+        // gap larger than that (e.g. after >~100s of watcher downtime) would
+        // strand the poller forever. Walk forward in ≤1000-block chunks and
+        // advance `lastBlock` per chunk so progress survives a mid-catch-up
+        // error and the next tick resumes where we left off.
+        const MAX_RANGE = 1000;
+        while (running && current > lastBlock) {
+          const fromBlock = lastBlock + 1;
+          const toBlock = Math.min(fromBlock + MAX_RANGE - 1, current);
+          await scanWindow(fromBlock, toBlock);
+          lastBlock = toBlock;
         }
-
-        const formLogs = await provider.getLogs({
-          address: orchAddress,
-          topics: [ethers.id("FormReceiptSubmitted(bytes32,address,string,bytes32,string)")],
-          fromBlock,
-          toBlock,
-        });
-
-        for (const raw of formLogs) {
-          try {
-            const parsed = orch.interface.parseLog({
-              topics: raw.topics as string[],
-              data: raw.data,
-            });
-            if (!parsed) continue;
-            const { jobId, agent, ipfsCid, summaryHash, summary } = parsed.args;
-            log.info("POLL: FormReceiptSubmitted", {
-              jobId,
-              agent,
-              block: raw.blockNumber,
-            });
-            await handlers.onFormReceiptSubmitted({
-              jobId,
-              agent,
-              ipfsCid,
-              summaryHash,
-              summary,
-            });
-          } catch (err) {
-            log.error("Failed to parse FormReceiptSubmitted log", err);
-          }
-        }
-
-        lastBlock = toBlock;
       } catch (err) {
         log.warn("Poll error — retrying", {
           error: err instanceof Error ? err.message : String(err),

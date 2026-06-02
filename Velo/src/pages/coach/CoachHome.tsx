@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
 import { Link, useLocation } from "wouter";
 import {
-  useMyJobs,
   useJobsByIds,
+  useAthletesReceiptJobIds,
   useCancelExpired,
   orchestratorAddress,
   type Job,
@@ -109,7 +109,6 @@ function DeadlineCell({ deadline, status }: { deadline: bigint; status: string }
 
 export default function CoachHome() {
   const { address } = useAccount();
-  const { jobs, isLoading, refetch } = useMyJobs(address);
   const [, setLocation] = useLocation();
   const { writeContractAsync, isPending: cancelling } = useCancelExpired();
   const publicClient = usePublicClient({ chainId: somniaTestnet.id });
@@ -127,6 +126,43 @@ export default function CoachHome() {
   const pendingRoster: RosterEntry[] = pendingRosterQ.data ?? [];
   const invites: CoachInvite[] = invitesQ.data ?? [];
   const pendingInvites = invites.filter((i) => !i.claimedAt && !i.revokedAt);
+
+  // Sessions are reconstructed WITHOUT any event-log scan: Somnia caps
+  // `eth_getLogs` at 1000 blocks and jobIds are content-hashed (no counter to
+  // enumerate), so a from-genesis `JobRequested` scan is impossible. Instead we
+  // gather candidate jobIds from two scan-free sources — the coach's
+  // locally-remembered recent jobs and every jobId attached to a roster
+  // athlete's SBT (each completed session appends a ReceiptRef) — then re-read
+  // each on-chain via `getJob` and keep the ones where this wallet is the coach.
+  const { recent } = useRecentJobs(address);
+  const recentIds = useMemo(() => recent.map((r) => r.jobId), [recent]);
+  const rosterAthletes = useMemo(
+    () => roster.map((r) => r.athleteAddress as `0x${string}`),
+    [roster],
+  );
+  const { jobIds: receiptJobIds } = useAthletesReceiptJobIds(rosterAthletes);
+  const knownJobIds = useMemo(() => {
+    const seen = new Set<string>();
+    const out: `0x${string}`[] = [];
+    [...recentIds, ...receiptJobIds].forEach((id) => {
+      const k = id.toLowerCase();
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(id);
+      }
+    });
+    return out;
+  }, [recentIds, receiptJobIds]);
+  const { jobs: knownJobs, isLoading, refetch } = useJobsByIds(knownJobIds);
+  const jobs = useMemo<Job[]>(
+    () =>
+      address
+        ? knownJobs
+            .filter((j) => j.coach.toLowerCase() === address.toLowerCase())
+            .sort((a, b) => Number(b.createdAt - a.createdAt))
+        : [],
+    [knownJobs, address],
+  );
   const [addOpen, setAddOpen] = useState(false);
   const [addAddr, setAddAddr] = useState("");
   const [addLabel, setAddLabel] = useState("");
@@ -153,19 +189,13 @@ export default function CoachHome() {
     };
   }, [jobs]);
 
-  // Locally-remembered jobs (written at submit time) make a just-paid job
-  // reachable immediately, before the event-log scan in useMyJobs catches up.
-  const { recent, remove } = useRecentJobs(address);
-  const recentIds = useMemo(() => recent.map((r) => r.jobId), [recent]);
-  const { jobs: recentChainJobs } = useJobsByIds(recentIds);
-
-  // Authoritative on-chain status by jobId, from both sources (chain wins).
+  // Authoritative on-chain status by jobId across every known job (used to tell
+  // whether a locally-remembered recent job has already settled).
   const statusById = useMemo(() => {
     const m = new Map<string, Job>();
-    jobs.forEach((j) => m.set(j.jobId.toLowerCase(), j));
-    recentChainJobs.forEach((j) => m.set(j.jobId.toLowerCase(), j));
+    knownJobs.forEach((j) => m.set(j.jobId.toLowerCase(), j));
     return m;
-  }, [jobs, recentChainJobs]);
+  }, [knownJobs]);
 
   // Active = in-progress sessions worth resuming. Union of on-chain in-progress
   // jobs and locally-remembered recent jobs, de-duped by jobId.
@@ -210,17 +240,11 @@ export default function CoachHome() {
     [jobs],
   );
 
-  // Prune locally-remembered jobs once they settle on-chain so the list stays
-  // lean and they fall through to the full sessions list.
-  useEffect(() => {
-    const settled = recent
-      .filter((r) => {
-        const c = statusById.get(r.jobId.toLowerCase());
-        return c && (c.status === "Completed" || c.status === "Cancelled");
-      })
-      .map((r) => r.jobId);
-    if (settled.length > 0) remove(settled);
-  }, [recent, statusById, remove]);
+  // Completed/cancelled recent jobs are intentionally NOT pruned from the local
+  // store: they're filtered out of "Active sessions" via `statusById` above and
+  // they reappear as Past sessions from the SBT-derived list, so keeping them
+  // around does no harm and survives a window where the SBT read is still
+  // loading.
 
   const handleQuickCancel = async (jobId: `0x${string}`, fee: bigint) => {
     const orch = orchestratorAddress();
