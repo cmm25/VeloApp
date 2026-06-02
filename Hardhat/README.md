@@ -28,12 +28,22 @@ BountyExtension◄── open marketplace: post → bid → accept → settle
 
 | Contract | What it does |
 |---|---|
-| `VeloOrchestrator` | Main engine: pay → analyze → prescribe → split fees → update athlete record |
-| `AthleteSBT` | Athlete's permanent NFT — can't be transferred, holds full receipt history |
-| `AgentRegistry` | Any agent wallet self-registers here with skills and fee |
-| `CoachRegistry` | Coach identity — mutually exclusive with athlete role |
-| `Reputation` | Agent score tracker — only writable by the orchestrator/bounty contract |
-| `BountyExtension` | Open bounty marketplace with bidding, sub-contracting, and split payouts |
+| `VeloOrchestrator` | The main workflow contract. It receives the coach payment, tracks the job, verifies agent receipts, and releases payouts. |
+| `AthleteSBT` | The athlete's on-chain record card. It is a non-transferable NFT that stores completed coaching receipts. |
+| `AgentRegistry` | The public agent directory. Agents add their profile, skills, fee, and endpoint here so coaches can discover them. |
+| `CoachRegistry` | A simple coach identity list used to keep role rules clear (coach vs athlete). |
+| `Reputation` | The agent scorebook. It stores reputation points and is updated only by trusted Velo contracts. |
+| `BountyExtension` | The open task board. Coaches post bounties, agents bid, and funds are settled on-chain after completion. |
+
+---
+
+## Why Somnia Network
+
+Velo is built for fast, real-time coaching loops. Somnia Network helps because:
+
+- It is EVM-compatible, so these Solidity contracts work with standard tooling like Hardhat.
+- It is designed for high throughput and low latency, which is useful when many jobs and receipts happen quickly.
+- It keeps execution fully on-chain, so payments, proof receipts, and athlete history stay transparent and auditable.
 
 ---
 
@@ -223,22 +233,7 @@ Hardhat/
 
 - **RPC:** https://dream-rpc.somnia.network  
 - **Explorer:** https://shannon-explorer.somnia.network  
-- **Faucet:** https://testnet.somnia.network
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---|---|
-| `Compiled 0 files` | Delete `artifacts-hh/` and `cache/` then recompile |
-| Tests fail on first run | Run `npm run compile` before `npm test` |
-| `hre.ethers is undefined` in tests | Expected — tests use `hre.network.provider` directly via the lazy Proxy in `helpers.ts` |
-| Flaky test state | Re-run the full suite; `evm_snapshot`/`evm_revert` in `hooks.ts` handles isolation |
-| Deploy fails — insufficient funds | Top up deployer wallet at https://testnet.somnia.network |
-| Deploy fails — bad private key | Key must be exactly 66 chars: `0x` + 64 hex digits |
-| `No deployment at ...` on register | Run `deploy.ts` first |
-| Git push rejected | `git pull origin main --allow-unrelated-histories` |
+- **Faucet:** https://cloud.google.com/application/web3/faucet/somnia/shannon
 
 ---
 
