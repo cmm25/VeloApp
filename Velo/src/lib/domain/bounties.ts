@@ -71,7 +71,9 @@ export function useOpenBounties() {
   const idsQ = useQuery({
     queryKey: ["velo:bounty:ids", ext],
     enabled: !!client && !!ext,
-    staleTime: 15_000,
+    staleTime: 0,
+    refetchOnMount: true,
+    retry: 2,
     queryFn: async () => {
       const event = bountyExtensionAbi.find(
         (x) => x.type === "event" && x.name === "BountyPosted",
@@ -114,6 +116,8 @@ export function useOpenBounties() {
   return {
     bounties,
     isLoading: idsQ.isLoading || detailsQ.isLoading,
+    isError: idsQ.isError,
+    error: idsQ.error,
     refetch: () => {
       idsQ.refetch();
       detailsQ.refetch();
@@ -330,6 +334,27 @@ export function useBountyTimeline(id?: bigint) {
 }
 
 // ─────────────────── write hooks ───────────────────
+
+export function usePlaceBid() {
+  const ext = bountyExtensionAddress();
+  const { writeContractAsync, ...rest } = useWriteContract();
+  return {
+    ...rest,
+    placeBid: async (args: {
+      bountyId: bigint;
+      proposedFee: bigint;
+      proposedDeadlineTs: bigint;
+    }) => {
+      if (!ext) throw new Error("BountyExtension not deployed");
+      return writeContractAsync({
+        address: ext,
+        abi: bountyExtensionAbi,
+        functionName: "bid",
+        args: [args.bountyId, args.proposedFee, args.proposedDeadlineTs],
+      });
+    },
+  };
+}
 
 export function usePostBounty() {
   const ext = bountyExtensionAddress();

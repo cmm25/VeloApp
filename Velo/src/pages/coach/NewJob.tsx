@@ -152,7 +152,12 @@ export default function NewJob() {
         requiredSkills: skills,
         valueWei,
       });
+      toast.loading("Confirming on-chain…", { id: "bounty-confirm" });
+      if (client) {
+        await client.waitForTransactionReceipt({ hash: txHash, confirmations: 1 });
+      }
       toast.success("Bounty posted", {
+        id: "bounty-confirm",
         description: `${txHash.slice(0, 10)}…${txHash.slice(-6)}`,
       });
       setLocation("/bounties");
