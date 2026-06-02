@@ -15,7 +15,7 @@ async function getSupabase() {
   return createClient(config.supabase.url, config.supabase.serviceKey);
 }
 
-// ── Receipts ──────────────────────────────────────────────────────────────────
+// Receipts
 // In-memory store (replaced by Supabase when SUPABASE_URL is set)
 const _receipts = new Map<string, StoredReceipt>();
 
@@ -99,7 +99,7 @@ async function fetchReceiptFromSupabase(jobId: string): Promise<StoredReceipt | 
   }
 }
 
-// ── Tapes ─────────────────────────────────────────────────────────────────────
+// Tapes
 // Athlete-owned video library. Shape mirrors Velo/src/lib/domain/tapes.ts.
 export type Tape = {
   id: number;
@@ -237,7 +237,7 @@ function rowToTape(row: Record<string, unknown>): Tape {
   };
 }
 
-// ── Athletes ──────────────────────────────────────────────────────────────────
+// Athletes
 // Shared display-name directory. Shape mirrors Velo/src/lib/domain/athletes.ts.
 export type ApiAthlete = {
   address: string;
@@ -333,7 +333,7 @@ async function resolveDisplayName(address: string): Promise<string | null> {
   return null;
 }
 
-// ── Roster + invite requests ────────────────────────────────────────────────
+// Roster + invite requests
 // Off-chain coach↔athlete links. A coach invites an athlete by wallet address,
 // which creates a `pending` row; the athlete accepts (→ `active`) or declines
 // (→ deleted). Shapes mirror Velo/src/lib/domain/roster.ts (RosterEntry,

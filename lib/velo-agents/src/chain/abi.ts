@@ -1,16 +1,16 @@
 export const ORCHESTRATOR_ABI = [
-  // ── Events ──────────────────────────────────────────────────────────────────
+  // Events
   "event JobRequested(bytes32 indexed jobId, address indexed coach, address indexed athlete, string videoCid, uint256 fee, uint64 deadline)",
   "event FormReceiptSubmitted(bytes32 indexed jobId, address indexed agent, string ipfsCid, bytes32 summaryHash, string summary)",
   "event PrescriptionSubmitted(bytes32 indexed jobId, address indexed agent, string ipfsCid, bytes32 summaryHash, string summary)",
   "event JobCancelled(bytes32 indexed jobId, address indexed coach)",
 
-  // ── State-mutating ───────────────────────────────────────────────────────────
+  // State-mutating
   "function submitFormReceipt((bytes32 jobId, address agent, string ipfsCid, bytes32 summaryHash, string summary, uint256 nonce, uint64 deadline, bytes32 priorReceiptHash) r, bytes signature)",
   "function submitPrescription((bytes32 jobId, address agent, string ipfsCid, bytes32 summaryHash, string summary, uint256 nonce, uint64 deadline, bytes32 priorReceiptHash) r, bytes signature)",
   "function withdraw()",
 
-  // ── Views ────────────────────────────────────────────────────────────────────
+  // Views
   "function getJob(bytes32 jobId) view returns ((address coach, address athlete, string videoCid, uint256 fee, uint64 createdAt, uint64 deadline, uint8 status))",
   "function getFormReceipt(bytes32 jobId) view returns ((bytes32 jobId, address agent, string ipfsCid, bytes32 summaryHash, string summary, uint256 nonce, uint64 deadline, bytes32 priorReceiptHash))",
   "function getPrescriptionReceipt(bytes32 jobId) view returns ((bytes32 jobId, address agent, string ipfsCid, bytes32 summaryHash, string summary, uint256 nonce, uint64 deadline, bytes32 priorReceiptHash))",

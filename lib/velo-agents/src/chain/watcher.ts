@@ -90,7 +90,7 @@ export async function startWatcher(handlers: WatcherHandlers): Promise<() => voi
   };
 }
 
-// ── WebSocket (optional) ─────────────────────────────────────────────────────
+// WebSocket (optional)
 
 function attachLowLevelWsError(
   provider: ethers.WebSocketProvider,
@@ -209,7 +209,7 @@ async function tryStartWebSocketWatcher(
   });
 }
 
-// ── HTTP polling ─────────────────────────────────────────────────────────────
+// HTTP polling
 
 async function startPollingWatcher(handlers: WatcherHandlers): Promise<() => void> {
   const provider = getProvider();

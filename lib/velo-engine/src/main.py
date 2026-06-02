@@ -80,7 +80,6 @@ async def analyze(req: AnalyzeRequest):
 
     tmp_path = None
     try:
-        # Download video to temp file
         tmp_path = await download_video(req.video_url, max_duration_s=req.max_duration_s)
 
         # Run analysis in thread pool (blocking CV2/MediaPipe work)

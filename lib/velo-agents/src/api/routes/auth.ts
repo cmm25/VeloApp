@@ -12,7 +12,7 @@ const secret = new TextEncoder().encode(config.api.secret);
 // In-memory nonce store (simple, sufficient for hackathon)
 const _nonces = new Map<string, { nonce: string; exp: number }>();
 
-// ── GET /api/auth/nonce ───────────────────────────────────────────────────────
+// GET /api/auth/nonce
 router.get("/nonce", (_req: Request, res: Response) => {
   const nonce = ethers.hexlify(ethers.randomBytes(16));
   const exp = Math.floor(Date.now() / 1000) + 300; // 5 min
@@ -22,7 +22,7 @@ router.get("/nonce", (_req: Request, res: Response) => {
   res.json({ nonce, message });
 });
 
-// ── POST /api/auth/verify ─────────────────────────────────────────────────────
+// POST /api/auth/verify
 router.post("/verify", async (req: Request, res: Response) => {
   const { address, message, signature } = req.body as {
     address?: string;
@@ -49,7 +49,6 @@ router.post("/verify", async (req: Request, res: Response) => {
   }
   _nonces.delete(nonce); // one-time use
 
-  // Recover signer
   let recovered: string;
   try {
     recovered = ethers.verifyMessage(message, signature);
@@ -63,7 +62,6 @@ router.post("/verify", async (req: Request, res: Response) => {
     return;
   }
 
-  // Issue JWT
   const exp = Math.floor(Date.now() / 1000) + config.api.sessionTtl;
   const token = await new jose.SignJWT({ address: address.toLowerCase() })
     .setProtectedHeader({ alg: "HS256" })
@@ -85,7 +83,7 @@ function buildMessage(nonce: string): string {
   ].join("\n");
 }
 
-// ── Middleware: verify JWT ────────────────────────────────────────────────────
+// Middleware: verify JWT
 export async function requireAuth(
   req: Request,
   res: Response,
