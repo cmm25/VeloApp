@@ -1,227 +1,62 @@
 # Velo — Smart Contracts
 
-On-chain infrastructure for Velo: coach-paid AI analysis jobs, soulbound athlete history, agent reputation, and an open bounty marketplace — deployed on **Somnia**.
+On-chain infrastructure for Velo: coach-paid AI analysis jobs, soulbound athlete
+history, agent reputation, and an open bounty marketplace — deployed on
+**Somnia** (chainId 50312).
 
-Built with **Hardhat 3** · **Solidity 0.8.28** · **ethers v6**
+Built with Hardhat 3 · Solidity 0.8.28 · ethers v6.
 
----
+## How it works
 
-## How It Works
-
-A coach pays STT to submit an athlete's video. Two AI agents analyze the footage and sign cryptographic receipts. The athlete gets a permanent, non-transferable NFT containing their full coaching history. Agents earn fees and build reputation. Coaches can also post open bounties for agents to bid on.
+A coach pays STT to submit an athlete's video. Two AI agents analyze it and sign
+cryptographic receipts. The athlete gets a permanent, non-transferable NFT with
+their full coaching history. Agents earn fees and build reputation, and coaches
+can post open bounties for agents to bid on.
 
 ```
 Coach ──payJob()──► VeloOrchestrator ──escrows STT──► JobEscrow
-                         │
-                         ├── Form Agent     ──signs EIP-712 receipt──► AthleteSBT updated
-                         ├── Prescriber     ──signs EIP-712 receipt──► fee split released
-                         └── withdraw()     ──pull-payment to agents
-
-AgentRegistry  ◄── agents self-register (name · skills · fee · endpoint)
-Reputation     ◄── credited on every completed job
-BountyExtension◄── open marketplace: post → bid → accept → settle
+                         ├── Form Agent  ──EIP-712 receipt──► AthleteSBT updated
+                         ├── Prescriber  ──EIP-712 receipt──► fee split released
+                         └── withdraw()  ──pull-payment to agents
 ```
-
----
 
 ## Contracts
 
 | Contract | What it does |
 |---|---|
-| `VeloOrchestrator` | The main workflow contract. It receives the coach payment, tracks the job, verifies agent receipts, and releases payouts. |
-| `AthleteSBT` | The athlete's on-chain record card. It is a non-transferable NFT that stores completed coaching receipts. |
-| `AgentRegistry` | The public agent directory. Agents add their profile, skills, fee, and endpoint here so coaches can discover them. |
-| `CoachRegistry` | A simple coach identity list used to keep role rules clear (coach vs athlete). |
-| `Reputation` | The agent scorebook. It stores reputation points and is updated only by trusted Velo contracts. |
-| `BountyExtension` | The open task board. Coaches post bounties, agents bid, and funds are settled on-chain after completion. |
-
----
-
-## Why Somnia Network
-
-Velo is built for fast, real-time coaching loops. Somnia Network helps because:
-
-- It is EVM-compatible, so these Solidity contracts work with standard tooling like Hardhat.
-- It is designed for high throughput and low latency, which is useful when many jobs and receipts happen quickly.
-- It keeps execution fully on-chain, so payments, proof receipts, and athlete history stay transparent and auditable.
-
----
+| `VeloOrchestrator` | Main workflow: takes payment, tracks the job, verifies receipts, releases payouts. |
+| `AthleteSBT` | Non-transferable NFT storing an athlete's completed receipts. |
+| `AgentRegistry` | Public directory where agents list their profile, skills, fee, endpoint. |
+| `CoachRegistry` | Coach identity list (keeps coach vs athlete roles clear). |
+| `Reputation` | Agent scorebook, updated only by trusted Velo contracts. |
+| `BountyExtension` | Open task board: post → bid → accept → settle on-chain. |
 
 ## Setup
-
-**Requirements:** Node.js 20+ · npm
 
 ```bash
 cd Hardhat
 npm install
-cp .env.example .env
-# Fill in your private keys (see Environment section below)
+cp .env.example .env   # fill in your private keys
 ```
 
----
+Set `DEPLOYER_PRIVATE_KEY` (pays deploy gas) and the agent keys. For a hackathon
+demo, one wallet can fill every role. Optional overrides (`SOMNIA_TESTNET_RPC`,
+`MIN_JOB_FEE_STT`, …) are documented in `.env.example`. Never commit `.env`.
 
-## Compile
+## Common commands
 
 ```bash
-npm run compile
+npm run compile          # compile contracts
+npm test                 # run the test suite (built-in simulated network)
+npm run deploy:somnia    # deploy the full suite to Somnia testnet
+npm run register:somnia  # register agent wallets on-chain
+npm run demo:somnia      # run a demo payJob end-to-end
 ```
 
-Expected output: `Compiled N Solidity files successfully`
-
----
-
-## Test
-
-No external node needed — tests run on Hardhat's built-in simulated network.
-
-```bash
-npm test
-```
-
-| Suite | File | Coverage |
-|---|---|---|
-| Agent Registry | `AgentRegistry.test.ts` | Register · update · skills · active toggle |
-| Reputation | `Reputation.test.ts` | Role-gated credits · rolling score cap |
-| Bounty Extension | `BountyExtension.test.ts` | Post · bid · accept · settle · expire |
-| Orchestrator + SBT | `VeloOrchestrator.test.ts` | Full job flow · EIP-712 receipts · soulbound rules |
-
-**32 specs · 4 suites** — all should pass before deploying.
-
----
-
-## Environment
-
-Copy `.env.example` → `.env`. Never commit `.env`.
-
-```env
-# Wallet private keys — 0x followed by 64 hex characters
-DEPLOYER_PRIVATE_KEY=0x...
-COACH_PRIVATE_KEY=0x...
-AGENT_FORM_PRIVATE_KEY=0x...
-AGENT_PRESCRIBER_PRIVATE_KEY=0x...
-
-# Optional overrides
-SOMNIA_TESTNET_RPC=https://dream-rpc.somnia.network
-SOMNIA_AGENT_REGISTRY=
-MIN_JOB_FEE_STT=0.001
-MIN_BOUNTY_FEE_STT=0.001
-
-# Only needed for demo-job script
-VIDEO_CID=
-ATHLETE_ADDRESS=
-JOB_FEE_WEI=
-```
-
-| Variable | Required | Description |
-|---|---|---|
-| `DEPLOYER_PRIVATE_KEY` | Yes | Pays gas for all deployments |
-| `COACH_PRIVATE_KEY` | Demo only | Submits test jobs via `demo-job` script |
-| `AGENT_FORM_PRIVATE_KEY` | Demo only | Signs form-analysis receipts |
-| `AGENT_PRESCRIBER_PRIVATE_KEY` | Demo only | Signs prescription receipts |
-| `SOMNIA_TESTNET_RPC` | No | Defaults to `https://dream-rpc.somnia.network` |
-| `SOMNIA_AGENT_REGISTRY` | No | Skip deploying your own registry and use this address |
-| `MIN_JOB_FEE_STT` | No | Minimum coach payment per job (default `0.001`) |
-| `MIN_BOUNTY_FEE_STT` | No | Minimum escrow for bounties (default `0.001`) |
-| `VIDEO_CID` | Demo only | IPFS CID of the swing video |
-| `ATHLETE_ADDRESS` | Demo only | Wallet address the SBT is minted to |
-| `JOB_FEE_WEI` | No | Override job fee in wei (leave blank to use minimum) |
-
-> For a hackathon demo, one wallet can fill all four roles — use the same private key for all four.
-
----
-
-## Deploy
-
-Deploys all 6 contracts in the correct order. Idempotent — if a contract already exists on-chain with matching dependencies, it is reused.
-
-```bash
-npm run deploy:somnia
-```
-
-**Deploy order:** `AgentRegistry` → `AthleteSBT` → `CoachRegistry` → `VeloOrchestrator` → `Reputation` → `BountyExtension`
-
-**Post-deploy wiring done automatically:**
-- Orchestrator is granted `APPENDER_ROLE` on AthleteSBT
-- BountyExtension is granted `ORCHESTRATOR_ROLE` on Reputation
-- CoachRegistry is linked into AthleteSBT for mutual-exclusion checks
-
-**Output:** `deployments/somniaTestnet.json` — the web app and agent runner read this file at boot.
-
----
-
-## Register Agents
-
-After deploy, register your agent wallets on the AgentRegistry:
-
-```bash
-npm run register:somnia
-```
-
-Each agent wallet calls `register()` on itself — the registry is permissionless and requires no admin.
-
----
-
-## Demo Job
-
-Simulate a full coach → agent → SBT flow end-to-end:
-
-```bash
-# Set VIDEO_CID and ATHLETE_ADDRESS in .env first
-npm run demo:somnia
-```
-
-The script submits a job, tails events until both receipts land, and prints the final job status and Somnia explorer links.
-
----
-
-## npm Scripts
-
-| Script | What it runs |
-|---|---|
-| `compile` | Compile all Solidity contracts |
-| `test` | Run all 32 Mocha specs |
-| `test:node` | Start a local persistent JSON-RPC node |
-| `deploy:somnia` | Deploy full suite to Somnia testnet |
-| `register:somnia` | Register agent wallets on-chain |
-| `demo:somnia` | Run a demo payJob end-to-end |
-| `typecheck` | TypeScript check (no emit) |
-| `lint` | Solhint on all contracts |
-
----
-
-## Project Layout
-
-```text
-Hardhat/
-├── contracts/
-│   ├── VeloOrchestrator.sol
-│   ├── AthleteSBT.sol
-│   ├── AgentRegistry.sol
-│   ├── CoachRegistry.sol
-│   ├── Reputation.sol
-│   ├── BountyExtension.sol
-│   ├── abstract/          # JobEscrow · ReceiptStore · SoulboundERC721
-│   ├── interfaces/        # IAgentRegistry · IAthleteSBT · IVeloOrchestrator
-│   ├── libraries/         # ReceiptLib · JobIdLib
-│   └── mocks/             # MockAgentRegistry (tests only)
-├── scripts/
-│   ├── deploy.ts
-│   ├── register-agents.ts
-│   └── demo-job.ts
-├── test/
-│   ├── AgentRegistry.test.ts
-│   ├── Reputation.test.ts
-│   ├── BountyExtension.test.ts
-│   ├── VeloOrchestrator.test.ts
-│   ├── helpers.ts
-│   └── hooks.ts
-├── deployments/           # Auto-generated — do not edit manually
-├── hardhat.config.ts
-├── package.json
-└── .env.example
-```
-
----
+`deploy:somnia` deploys all six contracts in order, wires up the roles
+automatically, and writes the addresses to `deployments/somniaTestnet.json` —
+the file the web app and agent runner read at boot. It is idempotent: existing
+contracts with matching dependencies are reused.
 
 ## Networks
 
@@ -231,21 +66,15 @@ Hardhat/
 | `localhost` | 31337 | Attach to `npx hardhat node` |
 | `somniaTestnet` | 50312 | Testnet deploy and demo |
 
-- **RPC:** https://dream-rpc.somnia.network  
-- **Explorer:** https://shannon-explorer.somnia.network  
-- **Faucet:** https://cloud.google.com/application/web3/faucet/somnia/shannon
+- RPC: https://dream-rpc.somnia.network
+- Explorer: https://shannon-explorer.somnia.network
+- Faucet: https://cloud.google.com/application/web3/faucet/somnia/shannon
 
----
+## Notes
 
-## Security
-
-- Never commit `.env` or expose private keys
-- Changing any `immutable` constructor argument requires a full redeploy of that contract
-- All payments use pull-payment — agents call `withdraw()`, nothing is pushed
-- The orchestrator can be paused/unpaused by any wallet holding `PAUSER_ROLE`
-- `BountyExtension` intentionally does not write to `AthleteSBT` in v1
-
----
+- Payments use pull-payment — agents call `withdraw()`, nothing is pushed.
+- Changing an `immutable` constructor argument requires redeploying that contract.
+- `deployments/` is auto-generated; do not edit it by hand.
 
 ## License
 
