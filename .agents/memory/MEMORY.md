@@ -1,1 +1,0 @@
-- [Somnia eth_getLogs cap](somnia-getlogs-cap.md) — Somnia rejects log ranges >1000 blocks; never scan fromBlock:0. Use bounded/chunked scans or derive ids from contract state.
