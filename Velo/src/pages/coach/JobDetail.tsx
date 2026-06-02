@@ -21,6 +21,7 @@ import { veloOrchestratorAbi } from "@/lib/web3/abis";
 import { ShieldCheck, Clock, AlertTriangle, ArrowLeft } from "lucide-react";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { ReceiptStage, Stage, Row, decodeReceipt } from "@/components/session/ReceiptStage";
+import { TelemetryPreview } from "@/components/session/TelemetryPreview";
 
 export default function JobDetail({ jobId }: { jobId: Hex }) {
   // Live-poll on-chain state until the session reaches a terminal stage so the
@@ -174,6 +175,20 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
                 ].filter(Boolean) as CompositionNode[]
               }
             />
+          )}
+
+          {/* Vision Analysis Preview — shows raw MediaPipe telemetry once form receipt lands */}
+          {formReceipt?.ipfsCid && !formReceipt.ipfsCid.startsWith("local:") && (
+            <div className="relative flex items-center justify-between md:justify-normal md:odd:flex-row-reverse group">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full border-[3px] border-background shrink-0 md:order-1 md:group-odd:-translate-x-1/2 md:group-even:translate-x-1/2 shadow-[0_0_0_4px_hsl(var(--background))] z-10 bg-amber/30">
+                <svg className="w-5 h-5 text-amber" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 10l4.553-2.069A1 1 0 0121 8.82v6.36a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h10a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
+                </svg>
+              </div>
+              <div className="w-[calc(100%-4rem)] md:w-[calc(50%-3rem)]">
+                <TelemetryPreview ipfsCid={formReceipt.ipfsCid} />
+              </div>
+            </div>
           )}
 
           {/* Stage 2 — Form Analysis */}
