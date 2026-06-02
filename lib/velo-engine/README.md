@@ -1,18 +1,18 @@
 # velo-engine
 
-Python FastAPI microservice that runs Google MediaPipe Pose on tennis videos and returns structured biomechanical telemetry for the Velo agent runner.
+A Python FastAPI service that runs Google MediaPipe Pose on tennis videos and
+returns structured biomechanical telemetry for the Velo agent runner. It is
+**optional** — set `VISION_MODE=mock` on the runner to skip it and use synthetic
+telemetry.
 
 ## What it does
 
 ```
 POST /analyze { video_url, video_cid }
-  → Downloads video from IPFS gateway
-  → Runs MediaPipe Pose frame-by-frame (every Nth frame)
-  → Extracts joint angles: shoulder, elbow, wrist, hip, knee
-  → Classifies stroke phases: preparation → contact → follow_through
-  → Detects dominant stroke: forehand / backhand / serve / volley
-  → Computes peak angles, average angles, symmetry score, stroke count
-  → Returns TennisTelemetry JSON
+  → download the video → run MediaPipe Pose frame-by-frame
+  → extract joint angles (shoulder, elbow, wrist, hip, knee)
+  → classify stroke phases and the dominant stroke
+  → return TennisTelemetry JSON
 ```
 
 ## Setup
@@ -21,13 +21,13 @@ POST /analyze { video_url, video_cid }
 pip install -r requirements.txt
 ```
 
-## Run locally
+## Run
 
 ```bash
 uvicorn src.main:app --reload --port 8000
 ```
 
-## Test
+Quick check:
 
 ```bash
 curl -X POST http://localhost:8000/analyze \
@@ -35,58 +35,7 @@ curl -X POST http://localhost:8000/analyze \
   -d '{"video_url": "https://gateway.pinata.cloud/ipfs/YOUR_CID"}'
 ```
 
-## Docker (Koyeb deployment)
+## Deploy
 
-```bash
-docker build -t velo-engine .
-docker run -p 8000:8000 velo-engine
-```
-
-## Telemetry output schema
-
-```json
-{
-  "video_url": "https://...",
-  "duration_ms": 42000,
-  "frames_analyzed": 63,
-  "fps": 30,
-  "stroke_phases": [
-    {
-      "phase": "preparation|contact|follow_through",
-      "frame_index": 8,
-      "timestamp_ms": 267,
-      "angles": {
-        "shoulder": 95.2,
-        "elbow": 112.4,
-        "wrist": 161.3,
-        "hip": 168.7,
-        "knee": 147.1
-      }
-    }
-  ],
-  "peak_angles": { ... },
-  "avg_angles": { ... },
-  "symmetry_score": 0.72,
-  "dominant_stroke": "forehand",
-  "stroke_count": 3,
-  "analysis_notes": "...",
-  "is_mock": false
-}
-```
-
-## Joint angle definitions
-
-| Joint | Measurement |
-|-------|------------|
-| Shoulder | Elbow → Shoulder → Hip (arm lift vs torso) |
-| Elbow | Wrist → Elbow → Shoulder (extension/flexion) |
-| Wrist | Index → Wrist → Elbow (wrist cock/snap) |
-| Hip | Shoulder → Hip → Knee (trunk rotation proxy) |
-| Knee | Hip → Knee → Ankle (knee drive/bend) |
-
-## Notes
-
-- Uses MediaPipe Pose `model_complexity=1` (balanced accuracy/speed)
-- Dominant side detected automatically (racket wrist = higher wrist)
-- Videos capped at 45s — more than enough for a rally or drill
-- `is_mock: false` in production output, `true` when agent uses synthetic fallback
+Ships a Dockerfile and honors the host's `PORT`. See
+[`../../docs/DEPLOY.md`](../../docs/DEPLOY.md).
