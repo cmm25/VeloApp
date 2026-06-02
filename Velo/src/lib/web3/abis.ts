@@ -1450,6 +1450,13 @@ export const bountyExtensionAbi = [
   },
   {
     type: "function",
+    name: "nextBountyId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "getBounty",
     stateMutability: "view",
     inputs: [{ name: "bountyId", type: "uint256" }],

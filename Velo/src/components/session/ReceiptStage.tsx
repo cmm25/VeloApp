@@ -43,6 +43,8 @@ import { useIpfsJson } from "@/lib/web3/ipfs";
 import { type IndexedEntry, type AiProvenance } from "@/lib/web3/indexer";
 import { somniaTestnet } from "@/lib/web3/chain";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
+import { getRecentLogs } from "@/lib/web3/logs";
+import type { AbiEvent } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 
@@ -523,15 +525,20 @@ function ReceiptIntegrityPanel({
           setState({ phase: "no-sig", reason: "Event ABI missing" });
           return;
         }
-        const logs = (await client.getLogs({
+        // Somnia caps `eth_getLogs` at 1000-block windows; scan a bounded recent
+        // window (the indexer signature is the fast path — this only runs when it
+        // isn't available). A miss here means "not found in the recent window",
+        // surfaced clearly rather than as a silent empty.
+        const logs = (await getRecentLogs(client, {
           address: orch,
-          event: event as never,
-          args: { jobId } as never,
-          fromBlock: 0n,
-          toBlock: "latest",
+          event: event as AbiEvent,
+          args: { jobId },
         })) as Array<{ transactionHash: Hex | null }>;
         if (logs.length === 0) {
-          setState({ phase: "no-sig", reason: "No submission log on chain" });
+          setState({
+            phase: "no-sig",
+            reason: "No recent submission log on chain",
+          });
           return;
         }
         const txHash = logs[0].transactionHash;
