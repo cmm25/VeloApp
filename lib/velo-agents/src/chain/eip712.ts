@@ -12,6 +12,57 @@ export function buildDomain(verifyingContract: string): ethers.TypedDataDomain {
   };
 }
 
+// EIP-712 domain — must match BountyExtension constructor: EIP712("VeloBounty", "1")
+export function buildBountyDomain(verifyingContract: string): ethers.TypedDataDomain {
+  return {
+    name: "VeloBounty",
+    version: "1",
+    chainId: config.somnia.chainId,
+    verifyingContract,
+  };
+}
+
+export async function signBountyReceipt(
+  signer: ethers.Wallet,
+  receipt: ReceiptStruct,
+  bountyExtensionAddress: string
+): Promise<string> {
+  const domain = buildBountyDomain(bountyExtensionAddress);
+  const types = RECEIPT_TYPES as unknown as Record<string, ethers.TypedDataField[]>;
+  return signer.signTypedData(domain, types, receipt);
+}
+
+/**
+ * Convert a numeric bountyId to the bytes32 jobId used in the receipt.
+ * Mirrors Solidity: bytes32(bountyId)
+ */
+export function bountyIdToJobId(bountyId: bigint): string {
+  return ethers.zeroPadValue(ethers.toBeHex(bountyId), 32);
+}
+
+export function buildBountyReceipt(
+  bountyId: bigint,
+  agentAddress: string,
+  ipfsCid: string,
+  fullReportBytes: Uint8Array,
+  summaryText: string,
+  nonce: bigint,
+  deadline: bigint
+): ReceiptStruct {
+  const summaryHash = ethers.keccak256(fullReportBytes);
+  const summary = truncateSummary(summaryText);
+  return {
+    jobId: bountyIdToJobId(bountyId),
+    agent: agentAddress,
+    ipfsCid,
+    summaryHash,
+    summary,
+    nonce,
+    deadline,
+    priorReceiptHash: ZERO_BYTES32,
+  };
+}
+
 // Must exactly mirror ReceiptLib.sol RECEIPT_TYPEHASH
 export const RECEIPT_TYPES = {
   Receipt: [
