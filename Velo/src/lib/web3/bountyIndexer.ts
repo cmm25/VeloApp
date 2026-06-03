@@ -34,6 +34,19 @@ export type BountyReportEntry = {
   blockNumber: string;
   report: BountyFormReport | null;
   explorerUrl: string;
+  /**
+   * IPFS CID stored in the form receipt — used to build the Pinata gateway
+   * link (`https://gateway.pinata.cloud/ipfs/{cid}`) as a fallback when the
+   * Somnia native-agent receipt URL isn't available.
+   */
+  ipfsCid?: string;
+  /**
+   * Somnia Agents portal receipt URL for the native LLM Inference agent
+   * (`https://agents.testnet.somnia.network/receipts/{requestId}`). Only
+   * present when `provenance.path === "native"`. Mirrors what sessions show
+   * in CompositionTree and PublicProfile.
+   */
+  somniaReceiptUrl?: string;
 };
 
 export type BountyReportResult =
@@ -68,6 +81,15 @@ export async function fetchBountyReport(
     return { status: "error", reason: body.error ?? `HTTP ${res.status}` };
   }
 
+  // Thread through IPFS CID (for Pinata link) and Somnia native-agent receipt
+  // URL (for agents.testnet.somnia.network link) from the server response.
+  // Both may be absent (older runners or off-chain fallback analysis).
+  const ipfsCid: string | undefined = body.form?.receipt?.ipfsCid ?? undefined;
+  const somniaReceiptUrl: string | undefined =
+    body.form?.provenance?.path === "native"
+      ? (body.form.provenance?.somnia?.receiptUrl ?? undefined)
+      : undefined;
+
   return {
     status: "settled",
     bountyId: body.bountyId,
@@ -77,6 +99,8 @@ export async function fetchBountyReport(
       blockNumber: body.form.blockNumber,
       report: body.form.report ?? null,
       explorerUrl: body.form.explorerUrl,
+      ipfsCid,
+      somniaReceiptUrl,
     },
   };
 }
