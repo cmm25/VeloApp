@@ -1,0 +1,72 @@
+services:
+  - type: web
+    name: velo-agents
+    runtime: docker
+    dockerfilePath: lib/velo-agents/Dockerfile
+    dockerContext: lib/velo-agents
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: "3001"
+      - key: API_SECRET
+        generateValue: true
+      - key: SOMNIA_RPC_URL
+        value: https://dream-rpc.somnia.network
+      - key: SOMNIA_CHAIN_ID
+        value: "50312"
+      - key: VISION_MODE
+        value: mock
+      - key: WATCHER_USE_WEBSOCKET
+        value: "false"
+      - key: POLL_INTERVAL_MS
+        value: "2000"
+      - key: SOMNIA_AGENTS_ENABLED
+        value: "true"
+      - key: SOMNIA_AGENTS_CONTRACT
+        value: "0x037Bb9C718F3f7fe5eCBDB0b600D607b52706776"
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: ORCHESTRATOR_ADDRESS
+        sync: false
+      - key: AGENT_REGISTRY_ADDRESS
+        sync: false
+      - key: ATHLETE_SBT_ADDRESS
+        sync: false
+      - key: BOUNTY_EXTENSION_ADDRESS
+        sync: false
+      - key: AGENT_FORM_PRIVATE_KEY
+        sync: false
+      - key: AGENT_PRESCRIBER_PRIVATE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: PINATA_JWT
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SOMNIA_AGENT_RELAY_ADDRESS
+        sync: false
+      - key: SOMNIA_LLM_AGENT_ID
+        sync: false
+
+  - type: web
+    name: velo-engine
+    runtime: docker
+    dockerfilePath: lib/velo-engine/Dockerfile
+    dockerContext: lib/velo-engine
+    healthCheckPath: /healthz
+    envVars:
+      - key: HOST
+        value: "0.0.0.0"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: MAX_VIDEO_DURATION_S
+        value: "45"
+      - key: MEDIAPIPE_MODEL_COMPLEXITY
+        value: "1"
+      - key: ANALYZER_BACKEND
+        value: mediapipe

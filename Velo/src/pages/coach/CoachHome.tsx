@@ -378,21 +378,21 @@ export default function CoachHome() {
           </motion.form>
         )}
 
-        {/* Roster strip */}
+        {/* Roster grid */}
         <section className="mb-10">
           {rosterQ.isLoading ? (
-            <div className="flex gap-3">
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="w-40 h-24 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
+                <div key={i} className="h-32 bg-card/50 border border-border/50 rounded-sm animate-pulse" />
               ))}
             </div>
           ) : roster.length === 0 ? (
-            <div className="border border-dashed border-border/50 bg-card/20 rounded-sm p-6 flex items-center justify-between gap-4">
+            <div className="border border-dashed border-border/50 bg-card/20 rounded-sm p-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
               <div>
                 <div className="font-serif-display text-2xl text-chalk mb-1">
                   Build your roster
                 </div>
-                <p className="text-sm text-muted-foreground font-light">
+                <p className="text-sm text-muted-foreground font-light max-w-sm">
                   Add an athlete by their wallet address — they'll accept on their dashboard and start owning their record.
                 </p>
               </div>
@@ -404,37 +404,52 @@ export default function CoachHome() {
               </button>
             </div>
           ) : (
-            <ul className="flex gap-3 overflow-x-auto pb-2">
+            <ul className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {roster.map((r) => {
                 const profile = resolve(r.athleteAddress as `0x${string}`);
                 const displayName = r.athleteName ?? r.label ?? profile?.name ?? `Athlete ${r.athleteAddress.slice(2, 6)}`;
+                const sessionCount = jobs.filter(
+                  (j) => j.athlete.toLowerCase() === r.athleteAddress.toLowerCase(),
+                ).length;
                 return (
-                  <li key={r.id} className="shrink-0">
+                  <li key={r.id}>
                     <Link
                       href={`/coach/athletes/${r.athleteAddress}`}
-                      className="flex items-center gap-3 px-4 py-3 bg-card/40 hover:bg-card border border-border/50 hover:border-amber/40 rounded-sm transition-colors w-56"
+                      className="group flex flex-col justify-between h-full p-5 bg-card/40 hover:bg-card border border-border/50 hover:border-amber/40 rounded-sm transition-all gap-4"
                     >
-                      <AthleteMonogram name={displayName} size="md" />
+                      <div className="flex items-start justify-between gap-3">
+                        <AthleteMonogram name={displayName} size="lg" />
+                        {sessionCount > 0 && (
+                          <span className="text-[10px] font-mono text-muted-foreground bg-card border border-border/60 px-2 py-0.5 rounded-sm shrink-0">
+                            {sessionCount} session{sessionCount !== 1 ? "s" : ""}
+                          </span>
+                        )}
+                      </div>
                       <div className="min-w-0">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <div className="text-sm text-chalk truncate font-medium">{displayName}</div>
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <span className="text-base text-chalk font-medium truncate leading-tight">
+                            {displayName}
+                          </span>
                           {profile && <VerifiedBadge verified={profile.verified} />}
                         </div>
-                        <div className="font-mono text-[10px] text-muted-foreground truncate">
-                          {shortAddr(r.athleteAddress, 6, 4)}
+                        <div className="font-mono text-[10px] text-muted-foreground truncate mb-3">
+                          {r.athleteAddress}
+                        </div>
+                        <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-amber/70 group-hover:text-amber transition-colors">
+                          Open workspace <ChevronRight className="w-3 h-3" />
                         </div>
                       </div>
                     </Link>
                   </li>
                 );
               })}
-              <li className="shrink-0">
+              <li>
                 <button
                   onClick={() => setAddOpen(true)}
-                  className="flex items-center gap-2 px-4 py-3 bg-card/20 hover:bg-card/40 border border-dashed border-border/50 hover:border-amber/50 rounded-sm w-40 h-full justify-center text-muted-foreground hover:text-amber"
+                  className="w-full h-full min-h-[8rem] flex flex-col items-center justify-center gap-2 p-5 bg-card/20 hover:bg-card/40 border border-dashed border-border/50 hover:border-amber/50 rounded-sm transition-colors text-muted-foreground hover:text-amber"
                 >
-                  <UserPlus className="w-4 h-4" />
-                  <span className="text-[11px] uppercase tracking-widest font-bold">Add</span>
+                  <UserPlus className="w-5 h-5" />
+                  <span className="text-[11px] uppercase tracking-widest font-bold">Add athlete</span>
                 </button>
               </li>
             </ul>
