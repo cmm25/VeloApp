@@ -10,6 +10,7 @@ import tapesRouter from "./routes/tapes.js";
 import athletesRouter from "./routes/athletes.js";
 import rosterRouter from "./routes/roster.js";
 import meRouter from "./routes/me.js";
+import bountiesRouter from "./routes/bounties.js";
 
 const log = makeLogger("api");
 
@@ -27,6 +28,7 @@ export function createServer() {
   app.use("/api/athletes", athletesRouter);
   app.use("/api/roster", rosterRouter);
   app.use("/api/me", meRouter);
+  app.use("/api/bounties", bountiesRouter);
 
   app.use((_req, res) => {
     res.status(404).json({ error: "Not found" });
@@ -60,6 +62,7 @@ export function startServer(): Promise<void> {
       log.info(`  GET  /api/me/roster-requests`);
       log.info(`  POST /api/me/roster-requests/:id/accept`);
       log.info(`  POST /api/me/roster-requests/:id/decline`);
+      log.info(`  GET  /api/bounties/:bountyId`);
       resolve();
     });
   });

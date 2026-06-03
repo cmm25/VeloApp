@@ -1,3 +1,29 @@
+export const BOUNTY_EXTENSION_ABI = [
+  // Events
+  "event BidAccepted(uint256 indexed bountyId, uint256 indexed bidId, address indexed leadAgent, uint256 acceptedFee, uint256 refund)",
+  "event JobStarted(uint256 indexed bountyId, address indexed leadAgent, uint64 deadline)",
+  "event Settled(uint256 indexed bountyId, address indexed leadAgent, uint256 totalPaid, (address agent, uint16 bps)[] splits)",
+
+  // State-mutating
+  "function settleWithSplits(uint256 bountyId, (bytes32 jobId, address agent, string ipfsCid, bytes32 summaryHash, string summary, uint256 nonce, uint64 deadline, bytes32 priorReceiptHash) leadReceipt, bytes leadSig, (bytes32 jobId, address agent, string ipfsCid, bytes32 summaryHash, string summary, uint256 nonce, uint64 deadline, bytes32 priorReceiptHash)[] subReceipts, bytes[] subSigs, (address agent, uint16 bps)[] splits)",
+  "function withdraw()",
+
+  // Views
+  "function getBounty(uint256 bountyId) view returns ((address poster, address athlete, string videoCid, uint64 deadline, uint64 createdAt, uint256 escrow, address leadAgent, uint256 acceptedFee, uint8 status, bytes32[] requiredSkills))",
+  "function nonceOf(address agent) view returns (uint256)",
+  "function domainSeparator() view returns (bytes32)",
+] as const;
+
+export interface BountyAcceptedEvent {
+  bountyId: bigint;
+  bidId: bigint;
+  leadAgent: string;
+  acceptedFee: bigint;
+  videoCid: string;
+  athlete: string;
+  deadline: bigint;
+}
+
 export const ORCHESTRATOR_ABI = [
   // Events
   "event JobRequested(bytes32 indexed jobId, address indexed coach, address indexed athlete, string videoCid, uint256 fee, uint64 deadline)",

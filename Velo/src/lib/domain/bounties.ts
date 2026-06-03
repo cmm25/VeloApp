@@ -518,3 +518,27 @@ export function useMinBountyFee() {
 export function parseSttToWei(input: string): bigint {
   return parseEther(input.trim() || "0");
 }
+
+/**
+ * Fetches the AI analysis report for a settled bounty from the agent runner.
+ * Polls every 4 s while the bounty is in "Accepted" state (analysis in flight),
+ * then stops once the runner returns "settled" or the component unmounts.
+ */
+export function useBountyReport(
+  bountyId: bigint | undefined,
+  settled: boolean,
+) {
+  return useQuery({
+    queryKey: ["velo:bounty-report", bountyId?.toString()],
+    enabled: !!bountyId && settled,
+    refetchInterval: (query) => {
+      const data = query.state.data as import("@/lib/web3/bountyIndexer").BountyReportResult | undefined;
+      if (!data) return 4000;
+      return data.status === "pending" ? 4000 : false;
+    },
+    queryFn: async () => {
+      const { fetchBountyReport } = await import("@/lib/web3/bountyIndexer");
+      return fetchBountyReport(bountyId!);
+    },
+  });
+}
