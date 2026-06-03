@@ -1,45 +1,55 @@
 """
-Velo Vision Engine — FastAPI MediaPipe sidecar
-Analyzes tennis videos and returns structured pose telemetry.
+Velo Vision Engine — FastAPI pose analysis sidecar
+
+Analyzes tennis videos and returns structured biomechanical telemetry for the
+Velo agent runner.  The analysis backend is selected at startup via the
+ANALYZER_BACKEND environment variable (default: mediapipe).
 
 Run locally:
   pip install -r requirements.txt
   uvicorn src.main:app --reload --port 8000
 
+Run with a custom model:
+  ANALYZER_BACKEND=custom CUSTOM_MODEL_PATH=custom_models/model.onnx \
+  uvicorn src.main:app --reload --port 8000
+
 Run with Docker:
   docker build -t velo-engine .
-  docker run -p 8000:8000 velo-engine
+  docker run -p 8000:8000 -e ANALYZER_BACKEND=mediapipe velo-engine
 """
 
 import asyncio
 import logging
 import os
-import tempfile
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from .models import AnalyzeRequest, TennisTelemetry
-from .analyze import analyze_video_file, download_video
+from .analyze import download_video
+from .factory import get_analyzer
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=os.environ.get("LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
 )
 log = logging.getLogger("main")
 
+_BACKEND = os.environ.get("ANALYZER_BACKEND", "mediapipe").lower().strip()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info("Velo Vision Engine starting up…")
+    log.info(f"Velo Vision Engine starting up (backend: {_BACKEND})…")
+    get_analyzer()
     yield
     log.info("Velo Vision Engine shutting down…")
 
 
 app = FastAPI(
     title="Velo Vision Engine",
-    description="MediaPipe tennis pose analysis sidecar for Velo agent runner",
+    description="Tennis pose analysis sidecar for the Velo agent runner",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -54,11 +64,11 @@ app.add_middleware(
 
 @app.get("/healthz")
 async def healthz():
-    """Health check — used by precheck.ts and Docker health check."""
+    """Health check — used by precheck.ts and the Docker HEALTHCHECK."""
     return {
         "status": "ok",
         "version": "1.0.0",
-        "engine": "mediapipe",
+        "backend": _BACKEND,
     }
 
 
@@ -67,11 +77,9 @@ async def analyze(req: AnalyzeRequest):
     """
     Analyze a tennis video and return pose telemetry.
 
-    - Downloads the video from the provided URL (IPFS gateway or direct)
-    - Runs MediaPipe Pose frame-by-frame
-    - Extracts joint angles for the tennis kinetic chain
-    - Classifies stroke phases and dominant stroke type
-    - Returns TennisTelemetry JSON consumed by the Form Agent
+    Downloads the video from the provided URL (IPFS gateway or direct link),
+    runs the configured analysis backend frame-by-frame, and returns structured
+    TennisTelemetry JSON consumed by the Velo Form Agent.
     """
     log.info(f"Analyze request: url={req.video_url[:80]}… cid={req.video_cid}")
 
@@ -82,11 +90,11 @@ async def analyze(req: AnalyzeRequest):
     try:
         tmp_path = await download_video(req.video_url, max_duration_s=req.max_duration_s)
 
-        # Run analysis in thread pool (blocking CV2/MediaPipe work)
+        analyzer = get_analyzer()
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
-            analyze_video_file,
+            analyzer.analyze_file,
             tmp_path,
             req.video_url,
             req.sample_rate,
@@ -94,7 +102,7 @@ async def analyze(req: AnalyzeRequest):
         )
 
         log.info(
-            f"Analysis complete: stroke={result.dominant_stroke} "
+            f"Analysis complete: backend={_BACKEND} stroke={result.dominant_stroke} "
             f"frames={result.frames_analyzed} symmetry={result.symmetry_score:.2f}"
         )
         return result
@@ -102,6 +110,9 @@ async def analyze(req: AnalyzeRequest):
     except ValueError as e:
         log.error(f"Analysis failed (bad input): {e}")
         raise HTTPException(status_code=422, detail=str(e))
+    except NotImplementedError as e:
+        log.error(f"Backend not implemented: {e}")
+        raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         log.error(f"Analysis failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
