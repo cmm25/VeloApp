@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { ORCHESTRATOR_ABI, AGENT_REGISTRY_ABI, type ReceiptStruct } from "./abi.js";
+import { ORCHESTRATOR_ABI, AGENT_REGISTRY_ABI, BOUNTY_EXTENSION_ABI, type ReceiptStruct } from "./abi.js";
 import { config } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
 
@@ -112,6 +112,59 @@ export async function submitPrescriptionTx(
 export async function getChainDomainSeparator(): Promise<string> {
   const orch = getOrchestrator();
   return await orch.domainSeparator();
+}
+
+export function getBountyExtension(signerOrProvider?: ethers.Signer | ethers.Provider) {
+  const addr = config.contracts.bountyExtension;
+  if (!addr) throw new Error("BOUNTY_EXTENSION_ADDRESS not set");
+  return new ethers.Contract(
+    addr,
+    BOUNTY_EXTENSION_ABI,
+    signerOrProvider ?? getProvider()
+  );
+}
+
+export async function fetchBounty(bountyId: bigint) {
+  const ext = getBountyExtension();
+  const b = await ext.getBounty(bountyId);
+  return {
+    poster: b.poster as string,
+    athlete: b.athlete as string,
+    videoCid: b.videoCid as string,
+    deadline: BigInt(b.deadline),
+    createdAt: BigInt(b.createdAt),
+    escrow: BigInt(b.escrow),
+    leadAgent: b.leadAgent as string,
+    acceptedFee: BigInt(b.acceptedFee),
+    status: Number(b.status),
+  };
+}
+
+export async function fetchBountyNonce(agentAddress: string): Promise<bigint> {
+  const ext = getBountyExtension();
+  const nonce = await ext.nonceOf(agentAddress);
+  return BigInt(nonce);
+}
+
+export async function settleWithSplitsTx(
+  bountyId: bigint,
+  receipt: ReceiptStruct,
+  signature: string,
+  signer: ethers.Wallet
+): Promise<ethers.TransactionReceipt> {
+  const ext = getBountyExtension(signer);
+  log.info("Calling settleWithSplits on-chain…", { bountyId: bountyId.toString() });
+  const tx = await ext.settleWithSplits(
+    bountyId,
+    receipt,
+    signature,
+    [],
+    [],
+    []
+  );
+  const rc = await tx.wait();
+  log.info("settleWithSplits confirmed", { txHash: rc.hash, block: rc.blockNumber });
+  return rc;
 }
 
 // Agent self-registration
