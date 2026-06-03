@@ -757,6 +757,8 @@ function BountyReportPanel({
           report={reportQ.data.form.report}
           txHash={reportQ.data.form.txHash}
           explorerUrl={reportQ.data.form.explorerUrl}
+          ipfsCid={reportQ.data.form.ipfsCid}
+          somniaReceiptUrl={reportQ.data.form.somniaReceiptUrl}
         />
       ) : (
         <div className="border border-border/50 bg-card/40 rounded-sm p-5 text-sm text-muted-foreground">
@@ -779,11 +781,18 @@ function FormReportCard({
   report,
   txHash,
   explorerUrl,
+  ipfsCid,
+  somniaReceiptUrl,
 }: {
   report: BountyFormReport;
   txHash: string;
   explorerUrl: string;
+  ipfsCid?: string;
+  somniaReceiptUrl?: string;
 }) {
+  const receiptLink = somniaReceiptUrl ?? (ipfsCid && !ipfsCid.startsWith("local:") ? ipfsGatewayUrl(ipfsCid) : undefined);
+  const receiptLabel = somniaReceiptUrl ? "Somnia Receipt" : "IPFS";
+
   return (
     <div className="border border-border/50 bg-card/40 rounded-sm divide-y divide-border/30">
       <div className="px-5 py-4 flex flex-wrap items-start gap-6">
@@ -878,19 +887,31 @@ function FormReportCard({
         </div>
       )}
 
-      <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2">
+      <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-3">
         <div className="font-mono text-[10px] text-muted-foreground">
           analysed {new Date(report.analysedAt).toLocaleString()} ·{" "}
           <span className="font-mono">{shortAddr(txHash, 6, 6)}</span>
         </div>
-        <a
-          href={explorerUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-amber hover:text-amber-soft"
-        >
-          Verify on-chain <ExternalLink className="w-3 h-3" />
-        </a>
+        <div className="flex items-center gap-4 flex-wrap">
+          {receiptLink && (
+            <a
+              href={receiptLink}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-amber hover:text-amber-soft"
+            >
+              {receiptLabel} <ExternalLink className="w-3 h-3" />
+            </a>
+          )}
+          <a
+            href={explorerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-chalk/60 hover:text-chalk"
+          >
+            Verify on-chain <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
       </div>
     </div>
   );
