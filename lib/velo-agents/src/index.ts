@@ -30,7 +30,10 @@ async function main() {
 
   // Register both agents on-chain with their skills so agentsBySkill() works.
   // Safe to call every startup — skips silently if already registered.
-  const apiBase = `http://localhost:${config.api.port}`;
+  // Use AGENT_API_URL env var (set in production) or fallback to localhost for local dev
+  const apiBase = process.env.AGENT_API_URL || `http://localhost:${config.api.port}`;
+  log.info("Registering agents with endpoint", { apiBase });
+  
   await registerAgentsOnChain(apiBase).catch((err) => {
     log.warn("On-chain agent registration failed (non-fatal — agents can still process jobs)", {
       error: err instanceof Error ? err.message : String(err),
