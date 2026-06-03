@@ -5,6 +5,7 @@ import { startServer } from "./api/server.js";
 import { startWatcher } from "./chain/watcher.js";
 import { handleJobRequested } from "./agents/form-agent.js";
 import { handleFormReceiptSubmitted } from "./agents/prescriber-agent.js";
+import { handleBountyAccepted } from "./agents/bounty-agent.js";
 import { registerAgentsOnChain } from "./chain/contracts.js";
 
 const log = makeLogger("runner");
@@ -56,6 +57,21 @@ async function main() {
       } catch (err) {
         log.error("Prescriber Agent failed for job", {
           jobId: event.jobId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+
+    onBountyAccepted: async (event) => {
+      log.info("► Bounty accepted — starting Bounty Agent", {
+        bountyId: event.bountyId.toString(),
+        leadAgent: event.leadAgent,
+      });
+      try {
+        await handleBountyAccepted(event);
+      } catch (err) {
+        log.error("Bounty Agent failed", {
+          bountyId: event.bountyId.toString(),
           error: err instanceof Error ? err.message : String(err),
         });
       }
