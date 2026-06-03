@@ -9,10 +9,12 @@ import {
   useAcceptBid,
   useExpireBounty,
   usePlaceBid,
+  useBountyReport,
   parseSttToWei,
   describeBidError,
   type TimelineEntry,
 } from "@/lib/domain/bounties";
+import type { BountyFormReport } from "@/lib/web3/bountyIndexer";
 import { useAgent, skillLabel } from "@/lib/domain/agents";
 import { useAccount } from "wagmi";
 import { shortAddr, formatStt, timeUntil } from "@/lib/format";
@@ -29,6 +31,10 @@ import {
   ShieldAlert,
   Send,
   XCircle,
+  Microscope,
+  TrendingUp,
+  TrendingDown,
+  Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./BountiesBoard";
@@ -51,6 +57,8 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
 
   const [bidFee, setBidFee] = useState("");
   const [bidDeadlineHours, setBidDeadlineHours] = useState(24);
+
+  const reportQ = useBountyReport(idNum, bounty?.status === "Settled");
 
   const { data: myAgent, isLoading: myAgentLoading } = useAgent(me);
 
@@ -330,6 +338,10 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
             </section>
 
             {bounty.status === "Settled" && <SettledSplits entries={timelineQ.data ?? []} />}
+
+            {bounty.status === "Settled" && (
+              <BountyReportPanel reportQ={reportQ} />
+            )}
           </>
         )}
       </main>
@@ -616,6 +628,181 @@ function Row({
       <div className="font-mono text-xs text-chalk/80 flex items-center">
         {value}
         {children}
+      </div>
+    </div>
+  );
+}
+
+const SEVERITY_STYLE: Record<string, string> = {
+  high: "text-destructive bg-destructive/10 border-destructive/30",
+  medium: "text-amber bg-amber/10 border-amber/30",
+  low: "text-muted-foreground bg-muted/10 border-muted/30",
+};
+
+function BountyReportPanel({
+  reportQ,
+}: {
+  reportQ: ReturnType<typeof useBountyReport>;
+}) {
+  return (
+    <section className="mb-10">
+      <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+        <Microscope className="w-3.5 h-3.5 text-amber/70" /> AI Analysis Report
+      </h2>
+
+      {reportQ.isLoading || !reportQ.data ? (
+        <div className="border border-border/50 bg-card/40 rounded-sm p-6 flex items-center gap-3 text-muted-foreground text-sm">
+          <Loader2 className="w-4 h-4 animate-spin text-amber/70" />
+          Waiting for agent runner to submit the report…
+        </div>
+      ) : reportQ.data.status === "error" ? (
+        <div className="border border-destructive/30 bg-destructive/5 rounded-sm p-5 text-sm text-destructive/80">
+          Could not load report — agent runner may be offline. ({reportQ.data.reason})
+        </div>
+      ) : reportQ.data.status === "pending" ? (
+        <div className="border border-border/50 bg-card/40 rounded-sm p-6 flex items-center gap-3 text-muted-foreground text-sm">
+          <Loader2 className="w-4 h-4 animate-spin text-amber/70" />
+          Analysis in progress, will refresh automatically…
+        </div>
+      ) : reportQ.data.form.report ? (
+        <FormReportCard
+          report={reportQ.data.form.report}
+          txHash={reportQ.data.form.txHash}
+          explorerUrl={reportQ.data.form.explorerUrl}
+        />
+      ) : (
+        <div className="border border-border/50 bg-card/40 rounded-sm p-5 text-sm text-muted-foreground">
+          The agent submitted a receipt on-chain but the report body wasn't stored.{" "}
+          <a
+            href={reportQ.data.form.explorerUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-amber hover:underline inline-flex items-center gap-1"
+          >
+            View tx <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FormReportCard({
+  report,
+  txHash,
+  explorerUrl,
+}: {
+  report: BountyFormReport;
+  txHash: string;
+  explorerUrl: string;
+}) {
+  return (
+    <div className="border border-border/50 bg-card/40 rounded-sm divide-y divide-border/30">
+      <div className="px-5 py-4 flex flex-wrap items-start gap-6">
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+            Stroke type
+          </div>
+          <div className="text-sm text-chalk font-medium capitalize">
+            {report.strokeType}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+            Form score
+          </div>
+          <div className="flex items-baseline gap-1">
+            <span className="font-mono text-2xl text-amber">
+              {report.overallScore.toFixed(1)}
+            </span>
+            <span className="text-xs text-muted-foreground">/ 10</span>
+          </div>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+            Key findings
+          </div>
+          <p className="text-sm text-chalk/90 font-light leading-relaxed">
+            {report.keyFindings}
+          </p>
+        </div>
+      </div>
+
+      {report.issues.length > 0 && (
+        <div className="px-5 py-4">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingDown className="w-3.5 h-3.5 text-destructive/70" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Issues · {report.issues.length}
+            </span>
+          </div>
+          <ul className="space-y-2">
+            {report.issues.map((issue, i) => (
+              <li
+                key={i}
+                className="flex flex-col sm:flex-row sm:items-start gap-2 p-3 rounded-sm border border-border/40 bg-background/30"
+              >
+                <span
+                  className={`inline-flex items-center self-start text-[10px] uppercase tracking-widest font-bold border px-1.5 py-0.5 rounded-sm shrink-0 ${SEVERITY_STYLE[issue.severity] ?? SEVERITY_STYLE["low"]}`}
+                >
+                  {issue.severity}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-chalk font-medium">{issue.area}</div>
+                  <div className="text-xs text-muted-foreground font-light mt-0.5">
+                    {issue.description}
+                  </div>
+                  {issue.cue && (
+                    <div className="text-xs text-amber/80 font-mono mt-1">
+                      Cue: {issue.cue}
+                    </div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {report.strengths.length > 0 && (
+        <div className="px-5 py-4">
+          <div className="flex items-center gap-2 mb-3">
+            <TrendingUp className="w-3.5 h-3.5 text-amber/70" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Strengths · {report.strengths.length}
+            </span>
+          </div>
+          <ul className="space-y-2">
+            {report.strengths.map((s, i) => (
+              <li
+                key={i}
+                className="flex flex-col sm:flex-row sm:items-start gap-2 p-3 rounded-sm border border-border/40 bg-background/30"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-chalk font-medium">{s.area}</div>
+                  <div className="text-xs text-muted-foreground font-light mt-0.5">
+                    {s.observation}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="px-5 py-3 flex items-center justify-between flex-wrap gap-2">
+        <div className="font-mono text-[10px] text-muted-foreground">
+          analysed {new Date(report.analysedAt).toLocaleString()} ·{" "}
+          <span className="font-mono">{shortAddr(txHash, 6, 6)}</span>
+        </div>
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-amber hover:text-amber-soft"
+        >
+          Verify on-chain <ExternalLink className="w-3 h-3" />
+        </a>
       </div>
     </div>
   );

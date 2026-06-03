@@ -36,6 +36,7 @@ export const config = {
     orchestrator: optional("ORCHESTRATOR_ADDRESS"),
     agentRegistry: optional("AGENT_REGISTRY_ADDRESS"),
     athleteSBT: optional("ATHLETE_SBT_ADDRESS"),
+    bountyExtension: optional("BOUNTY_EXTENSION_ADDRESS"),
   },
 
   agents: {

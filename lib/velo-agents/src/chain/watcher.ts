@@ -2,8 +2,8 @@ import { ethers } from "ethers";
 import { config } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
 import { sleep } from "../utils/retry.js";
-import { getOrchestrator, getProvider } from "./contracts.js";
-import type { JobEvent, FormReceiptEvent } from "./abi.js";
+import { getOrchestrator, getProvider, getBountyExtension, fetchBounty } from "./contracts.js";
+import type { JobEvent, FormReceiptEvent, BountyAcceptedEvent } from "./abi.js";
 
 const log = makeLogger("watcher");
 
@@ -11,10 +11,12 @@ const WS_HANDSHAKE_MS = 8_000;
 
 export type JobRequestedHandler = (event: JobEvent) => Promise<void>;
 export type FormReceiptHandler = (event: FormReceiptEvent) => Promise<void>;
+export type BountyAcceptedHandler = (event: BountyAcceptedEvent) => Promise<void>;
 
 interface WatcherHandlers {
   onJobRequested: JobRequestedHandler;
   onFormReceiptSubmitted: FormReceiptHandler;
+  onBountyAccepted?: BountyAcceptedHandler;
 }
 
 /**
@@ -35,6 +37,7 @@ function normalizeSomniaWsUrl(url: string): string | null {
 function withDedupe(handlers: WatcherHandlers): WatcherHandlers {
   const seenJobs = new Set<string>();
   const seenForms = new Set<string>();
+  const seenBounties = new Set<string>();
 
   return {
     onJobRequested: async (event) => {
@@ -49,6 +52,14 @@ function withDedupe(handlers: WatcherHandlers): WatcherHandlers {
       seenForms.add(key);
       await handlers.onFormReceiptSubmitted(event);
     },
+    onBountyAccepted: handlers.onBountyAccepted
+      ? async (event) => {
+          const key = event.bountyId.toString();
+          if (seenBounties.has(key)) return;
+          seenBounties.add(key);
+          await handlers.onBountyAccepted!(event);
+        }
+      : undefined,
   };
 }
 
@@ -57,6 +68,7 @@ function withDedupe(handlers: WatcherHandlers): WatcherHandlers {
  *
  * - HTTP polling is always on (source of truth; survives RPC WS 502s).
  * - WebSocket is optional (`WATCHER_USE_WEBSOCKET=true`) and best-effort only.
+ * - Bounty polling is always on when BOUNTY_EXTENSION_ADDRESS is set.
  */
 export async function startWatcher(handlers: WatcherHandlers): Promise<() => void> {
   const safe = withDedupe(handlers);
@@ -84,8 +96,17 @@ export async function startWatcher(handlers: WatcherHandlers): Promise<() => voi
     );
   }
 
+  let stopBountyPolling: (() => void) | null = null;
+  if (safe.onBountyAccepted && config.contracts.bountyExtension) {
+    log.info("Starting BountyExtension polling…");
+    stopBountyPolling = await startBountyPollingWatcher(safe.onBountyAccepted);
+  } else if (!config.contracts.bountyExtension) {
+    log.info("BOUNTY_EXTENSION_ADDRESS not set — skipping bounty watcher");
+  }
+
   return async () => {
     if (stopWs) await stopWs();
+    if (stopBountyPolling) stopBountyPolling();
     await stopPolling();
   };
 }
@@ -336,5 +357,103 @@ async function startPollingWatcher(handlers: WatcherHandlers): Promise<() => voi
   return () => {
     running = false;
     log.info("Polling watcher stopped");
+  };
+}
+
+// Bounty polling
+
+async function startBountyPollingWatcher(
+  handler: BountyAcceptedHandler
+): Promise<() => void> {
+  const provider = getProvider();
+
+  let lastBlock =
+    config.watcher.startBlock > 0
+      ? config.watcher.startBlock
+      : (await provider.getBlockNumber()) - 1;
+
+  log.info(`Bounty polling from block ${lastBlock}`);
+
+  let running = true;
+
+  const bidAcceptedTopic = ethers.id(
+    "BidAccepted(uint256,uint256,address,uint256,uint256)"
+  );
+
+  const bountyAddr = config.contracts.bountyExtension;
+
+  const scanWindow = async (fromBlock: number, toBlock: number) => {
+    const ext = getBountyExtension();
+    const logs = await provider.getLogs({
+      address: bountyAddr,
+      topics: [bidAcceptedTopic],
+      fromBlock,
+      toBlock,
+    });
+
+    for (const raw of logs) {
+      try {
+        const parsed = ext.interface.parseLog({
+          topics: raw.topics as string[],
+          data: raw.data,
+        });
+        if (!parsed) continue;
+        const { bountyId, bidId, leadAgent, acceptedFee } = parsed.args;
+
+        // Fetch full bounty details to get videoCid, athlete, deadline
+        const bounty = await fetchBounty(BigInt(bountyId));
+
+        log.info("POLL: BidAccepted", {
+          bountyId: bountyId.toString(),
+          leadAgent,
+          block: raw.blockNumber,
+        });
+
+        await handler({
+          bountyId: BigInt(bountyId),
+          bidId: BigInt(bidId),
+          leadAgent: leadAgent as string,
+          acceptedFee: BigInt(acceptedFee),
+          videoCid: bounty.videoCid,
+          athlete: bounty.athlete,
+          deadline: bounty.deadline,
+        });
+      } catch (err) {
+        log.error("Failed to parse BidAccepted log", err);
+      }
+    }
+  };
+
+  const poll = async () => {
+    while (running) {
+      try {
+        const current = await provider.getBlockNumber();
+        if (current <= lastBlock) {
+          await sleep(config.watcher.pollIntervalMs);
+          continue;
+        }
+
+        const MAX_RANGE = 1000;
+        while (running && current > lastBlock) {
+          const fromBlock = lastBlock + 1;
+          const toBlock = Math.min(fromBlock + MAX_RANGE - 1, current);
+          await scanWindow(fromBlock, toBlock);
+          lastBlock = toBlock;
+        }
+      } catch (err) {
+        log.warn("Bounty poll error — retrying", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
+      await sleep(config.watcher.pollIntervalMs);
+    }
+  };
+
+  poll();
+
+  return () => {
+    running = false;
+    log.info("Bounty polling watcher stopped");
   };
 }
