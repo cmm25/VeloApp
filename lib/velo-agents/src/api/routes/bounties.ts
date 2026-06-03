@@ -29,7 +29,7 @@ const router = Router();
  * }
  */
 router.get("/:bountyId", async (req: Request, res: Response) => {
-  const raw = req.params.bountyId ?? "";
+  const raw = Array.isArray(req.params.bountyId) ? req.params.bountyId[0] : (req.params.bountyId ?? "");
 
   let bountyIdNum: bigint;
   try {
