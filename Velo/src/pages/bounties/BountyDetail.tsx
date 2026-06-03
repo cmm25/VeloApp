@@ -17,8 +17,9 @@ import {
 import type { BountyFormReport } from "@/lib/web3/bountyIndexer";
 import { useAgent, skillLabel } from "@/lib/domain/agents";
 import { useAccount } from "wagmi";
-import { shortAddr, formatStt, timeUntil } from "@/lib/format";
+import { shortAddr, formatStt, timeUntil, explorerAddr } from "@/lib/format";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
+import { somniaTestnet } from "@/lib/web3/chain";
 import {
   ArrowLeft,
   Target,
@@ -35,6 +36,8 @@ import {
   TrendingUp,
   TrendingDown,
   Loader2,
+  Award,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./BountiesBoard";
@@ -77,9 +80,7 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
       ));
   const isEligibleAgent = isActiveAgent && hasRequiredSkill;
 
-  // Bidding is open on this bounty for someone other than the poster…
   const bidOpen = !!bounty && bounty.status === "Open" && !isExpired && !isPoster;
-  // …but only registered, active agents with a matching skill may actually bid.
   const canBid = bidOpen && !!me && isEligibleAgent;
 
   if (idNum === undefined) {
@@ -133,6 +134,9 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                 <div className="font-mono text-[10px] text-muted-foreground mt-2 truncate">
                   athlete {shortAddr(bounty.athlete, 6, 6)} · posted by{" "}
                   {shortAddr(bounty.poster, 6, 6)}
+                  {isPoster && (
+                    <span className="ml-2 text-amber font-bold">(you)</span>
+                  )}
                 </div>
               </div>
               <div className="flex flex-col gap-1 text-right shrink-0">
@@ -337,15 +341,101 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
               )}
             </section>
 
-            {bounty.status === "Settled" && <SettledSplits entries={timelineQ.data ?? []} />}
+            {bounty.status === "Settled" && (
+              <SettledSplits entries={timelineQ.data ?? []} />
+            )}
+
+            {/* Poster callout — shown when viewer is the poster and bounty is settled */}
+            {bounty.status === "Settled" && isPoster && (
+              <div className="mb-6 p-4 border border-amber/40 bg-amber/[0.05] rounded-sm flex items-start gap-3">
+                <Award className="w-4 h-4 text-amber mt-0.5 shrink-0" />
+                <div>
+                  <div className="text-sm font-medium text-chalk mb-0.5">
+                    Your bounty has been analysed
+                  </div>
+                  <p className="text-xs text-muted-foreground font-light">
+                    The agent completed the analysis and submitted a receipt on-chain. The full
+                    report is below — it includes stroke assessment, detected issues, strengths, and
+                    coaching cues, just like a standard session receipt.
+                  </p>
+                </div>
+              </div>
+            )}
 
             {bounty.status === "Settled" && (
               <BountyReportPanel reportQ={reportQ} />
             )}
+
+            {/* Somnia links — shown once settled and a lead agent is known */}
+            {bounty.status === "Settled" &&
+              bounty.leadAgent &&
+              bounty.leadAgent !== "0x0000000000000000000000000000000000000000" && (
+                <SomniaLinksPanel
+                  leadAgent={bounty.leadAgent}
+                  chainId={somniaTestnet.id}
+                />
+              )}
           </>
         )}
       </main>
     </div>
+  );
+}
+
+// Somnia links panel shown at the bottom of a settled bounty
+
+function SomniaLinksPanel({
+  leadAgent,
+  chainId,
+}: {
+  leadAgent: Address;
+  chainId: number;
+}) {
+  return (
+    <section className="mb-10">
+      <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3 flex items-center gap-2">
+        <Link2 className="w-3.5 h-3.5 text-amber/70" /> On-chain references
+      </h2>
+      <div className="border border-border/50 bg-card/40 rounded-sm divide-y divide-border/30">
+        <div className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">
+              Lead agent
+            </div>
+            <div className="font-mono text-xs text-chalk/80 truncate">{leadAgent}</div>
+          </div>
+          <div className="flex gap-3 flex-wrap shrink-0">
+            <Link
+              href={`/a/${leadAgent}`}
+              className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-amber hover:text-amber-soft border border-amber/40 hover:border-amber px-3 py-1.5 rounded-sm transition-colors"
+            >
+              <Bot className="w-3 h-3" /> Agent profile
+            </Link>
+            <a
+              href={explorerAddr(leadAgent)}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-chalk/80 hover:text-chalk border border-border/60 hover:border-border px-3 py-1.5 rounded-sm transition-colors"
+            >
+              <ExternalLink className="w-3 h-3" /> Somnia explorer
+            </a>
+          </div>
+        </div>
+        <div className="px-5 py-3 flex items-center justify-between gap-4">
+          <span className="text-[10px] font-mono text-muted-foreground">
+            Chain ID {chainId} · Somnia Testnet
+          </span>
+          <a
+            href={`https://explorer.somnia.network`}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-mono text-muted-foreground hover:text-amber transition-colors"
+          >
+            explorer.somnia.network <ExternalLink className="w-3 h-3" />
+          </a>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -562,9 +652,7 @@ function RequiredSkills({
   skills,
   agentSkills,
 }: {
-  // bytes32 skill hashes this bounty requires
   skills: Hex[];
-  // the connected agent's skills, or undefined when no active agent is connected
   agentSkills?: Hex[];
 }) {
   return (
