@@ -13,14 +13,27 @@ import { useAthleteReceipts } from "@/hooks/useVeloContracts";
 import { shortAddr } from "@/lib/format";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
-import { ArrowLeft, ChevronRight, Film, Plus, Trash2, LinkIcon } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  Film,
+  Plus,
+  Trash2,
+  LinkIcon,
+  History,
+  ArrowRightLeft,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
+import type { Job } from "@/hooks/useVeloContracts";
 
 /**
  * Per-athlete workspace at /coach/athletes/:address.
- * Shows the athlete's library, the sessions this coach has paid for them,
- * and a quick action to start a new session pre-targeted to this athlete.
+ *
+ * Shows ALL on-chain sessions for the athlete — including sessions paid by
+ * previous coaches — so when an athlete transfers to a new coach they bring
+ * their complete history with them. Sessions are split into "your sessions"
+ * and "prior coach history" for clarity.
  */
 export default function AthleteWorkspace({ address: addrParam }: { address: string }) {
   const valid = isAddress(addrParam);
@@ -28,10 +41,10 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
   const { address: coachAddr } = useAccount();
   const { resolve, ensure } = useAthleteDirectory();
   const { receipts, count } = useAthleteReceipts(athlete);
-  // Past sessions for this athlete are derived from their SBT receipts (each
-  // carries its jobId) rather than a from-genesis event-log scan, which Somnia
-  // rejects (1000-block window cap). We re-read live job state for those ids and
-  // keep only the ones this coach paid for.
+
+  // All job ids come from the athlete's SBT receipts — no from-genesis log
+  // scan needed (Somnia caps eth_getLogs at 1000 blocks). This gives us every
+  // completed session the athlete has ever had, across ALL coaches.
   const receiptJobIds = useMemo<Hex[]>(() => {
     const seen = new Set<string>();
     const out: Hex[] = [];
@@ -43,6 +56,7 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
     }
     return out;
   }, [receipts]);
+
   const { jobs } = useJobsByIds(receiptJobIds);
   const tapesQ = useTapes(athlete);
   const remove = useRemoveRoster();
@@ -69,13 +83,37 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
   const { data: latestRxIpfs } = useIpfsJson(latestReceipt?.ipfsCid);
   const latestRxSomniaReceiptUrl = useMemo(
     () => somniaReceiptUrlFromJson(latestRxIpfs),
-    [latestRxIpfs]
+    [latestRxIpfs],
   );
-  const athleteJobs = jobs.filter(
-    (j) =>
-      j.athlete.toLowerCase() === athlete &&
-      (!coachAddr || j.coach.toLowerCase() === coachAddr.toLowerCase()),
+
+  // All sessions for this athlete (from any coach) — sorted newest first.
+  const allAthleteJobs = useMemo<Job[]>(
+    () =>
+      jobs
+        .filter((j) => j.athlete.toLowerCase() === athlete)
+        .sort((a, b) => Number(b.createdAt - a.createdAt)),
+    [jobs, athlete],
   );
+
+  // Sessions this coach personally paid for.
+  const myJobs = useMemo<Job[]>(
+    () =>
+      allAthleteJobs.filter(
+        (j) => !coachAddr || j.coach.toLowerCase() === coachAddr.toLowerCase(),
+      ),
+    [allAthleteJobs, coachAddr],
+  );
+
+  // Sessions paid for by other (prior) coaches — history the athlete brings
+  // with them when they join or transfer to you.
+  const priorJobs = useMemo<Job[]>(
+    () =>
+      allAthleteJobs.filter(
+        (j) => coachAddr && j.coach.toLowerCase() !== coachAddr.toLowerCase(),
+      ),
+    [allAthleteJobs, coachAddr],
+  );
+
   const tapes = tapesQ.data ?? [];
 
   const handleRemove = async () => {
@@ -85,7 +123,9 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
       toast.success("Removed from roster");
       setLocation("/coach");
     } catch (err) {
-      toast.error("Remove failed", { description: err instanceof Error ? err.message : String(err) });
+      toast.error("Remove failed", {
+        description: err instanceof Error ? err.message : String(err),
+      });
     }
   };
 
@@ -116,7 +156,9 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
               </h1>
               {profile && <VerifiedBadge verified={profile.verified} size="md" />}
             </div>
-            <div className="font-mono text-[10px] text-muted-foreground mt-2 truncate">{athlete}</div>
+            <div className="font-mono text-[10px] text-muted-foreground mt-2 truncate">
+              {athlete}
+            </div>
           </div>
           <div className="flex flex-col gap-2 shrink-0">
             <button
@@ -141,11 +183,30 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
           </div>
         </motion.header>
 
-        <div className="grid md:grid-cols-3 gap-3 mb-10">
+        <div className="grid md:grid-cols-4 gap-3 mb-10">
           <Tile label="Library tapes" value={tapes.length} />
-          <Tile label="Sessions with you" value={athleteJobs.length} />
+          <Tile label="Your sessions" value={myJobs.length} />
+          <Tile label="Prior sessions" value={priorJobs.length} tone={priorJobs.length > 0 ? "amber" : undefined} />
           <Tile label="On-chain receipts" value={Number(count)} />
         </div>
+
+        {/* Prior coach history notice — shown only when the athlete has history from other coaches */}
+        {priorJobs.length > 0 && (
+          <div className="mb-8 p-4 border border-amber/30 bg-amber/[0.04] rounded-sm flex items-start gap-3">
+            <ArrowRightLeft className="w-4 h-4 text-amber mt-0.5 shrink-0" />
+            <div>
+              <div className="text-sm font-medium text-chalk mb-0.5">
+                This athlete transferred with their full history
+              </div>
+              <p className="text-xs text-muted-foreground font-light">
+                {priorJobs.length} session{priorJobs.length !== 1 ? "s" : ""} from previous
+                coach{priorJobs.length !== 1 ? "es are" : " is"} shown below. All receipts are
+                permanent on-chain records owned by the athlete — you can read them just as you
+                would your own.
+              </p>
+            </div>
+          </div>
+        )}
 
         <section className="mb-12">
           <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
@@ -161,7 +222,10 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
           ) : (
             <ul className="grid sm:grid-cols-2 gap-3">
               {tapes.map((t) => (
-                <li key={t.id} className="p-3 bg-card/40 border border-border/50 rounded-sm flex items-center gap-3">
+                <li
+                  key={t.id}
+                  className="p-3 bg-card/40 border border-border/50 rounded-sm flex items-center gap-3"
+                >
                   <div className="w-10 h-10 rounded-sm bg-amber/10 border border-amber/30 flex items-center justify-center shrink-0">
                     <Film className="w-4 h-4 text-amber/80" />
                   </div>
@@ -177,11 +241,12 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
           )}
         </section>
 
-        <section>
+        {/* Your sessions */}
+        <section className="mb-10">
           <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
-            Sessions with this athlete{athleteJobs.length > 0 ? ` · ${athleteJobs.length}` : ""}
+            Your sessions with this athlete{myJobs.length > 0 ? ` · ${myJobs.length}` : ""}
           </h2>
-          {athleteJobs.length === 0 ? (
+          {myJobs.length === 0 ? (
             <div className="border-l-2 border-amber/30 pl-6 py-4 my-4">
               <p className="font-serif-display text-lg text-chalk mb-1">No sessions yet</p>
               <p className="text-muted-foreground font-mono text-[11px] uppercase tracking-widest">
@@ -190,32 +255,40 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
             </div>
           ) : (
             <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
-              {athleteJobs.map((j) => (
-                <li key={j.jobId}>
-                  <Link
-                    href={`/coach/jobs/${j.jobId}`}
-                    className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-card/40 transition-colors"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-sm text-chalk font-medium">{j.status}</div>
-                      <div className="text-[10px] font-mono text-muted-foreground truncate">
-                        {shortAddr(j.jobId, 6, 4)} · {new Date(Number(j.createdAt) * 1000).toLocaleDateString()}
-                      </div>
-                    </div>
-                    <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                  </Link>
-                </li>
+              {myJobs.map((j) => (
+                <SessionRow key={j.jobId} job={j} />
               ))}
             </ul>
           )}
-          <p className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mt-6">
-            Receipts on-chain · {receipts.length} ·{" "}
-            <Link href={`/p/${athlete}`} className="text-amber hover:text-amber-soft">View timeline</Link>
-          </p>
         </section>
 
+        {/* Prior coach sessions — always visible so new coach sees the full record */}
+        {priorJobs.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4 flex items-center gap-2">
+              <History className="w-3 h-3 text-amber/70" />
+              Prior coach history · {priorJobs.length}
+            </h2>
+            <ul className="border border-border/50 rounded-sm divide-y divide-border/30">
+              {priorJobs.map((j) => (
+                <SessionRow key={j.jobId} job={j} priorCoach={j.coach} />
+              ))}
+            </ul>
+            <p className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mt-3">
+              These sessions were paid by a previous coach. Receipts are on-chain and belong to the athlete.
+            </p>
+          </section>
+        )}
+
+        <p className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mt-2 mb-10">
+          Receipts on-chain · {receipts.length} ·{" "}
+          <Link href={`/p/${athlete}`} className="text-amber hover:text-amber-soft">
+            View timeline
+          </Link>
+        </p>
+
         {receipts.length > 0 && (
-          <section className="mt-12">
+          <section className="mt-2">
             <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-4">
               Latest composition
             </h2>
@@ -245,13 +318,55 @@ export default function AthleteWorkspace({ address: addrParam }: { address: stri
   );
 }
 
-function Tile({ label, value }: { label: string; value: number }) {
+function SessionRow({ job, priorCoach }: { job: Job; priorCoach?: string }) {
+  return (
+    <li>
+      <Link
+        href={`/coach/jobs/${job.jobId}`}
+        className="flex items-center justify-between gap-4 px-4 py-3 hover:bg-card/40 transition-colors"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="text-sm text-chalk font-medium">{job.status}</div>
+            {priorCoach && (
+              <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold border border-border/60 text-muted-foreground bg-card/40 px-1.5 py-0.5 rounded-sm">
+                <History className="w-2.5 h-2.5" />
+                Prior · {shortAddr(priorCoach, 6, 4)}
+              </span>
+            )}
+          </div>
+          <div className="text-[10px] font-mono text-muted-foreground truncate">
+            {shortAddr(job.jobId, 6, 4)} ·{" "}
+            {new Date(Number(job.createdAt) * 1000).toLocaleDateString()}
+          </div>
+        </div>
+        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+      </Link>
+    </li>
+  );
+}
+
+function Tile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "amber";
+}) {
   return (
     <div className="bg-card/30 border border-border/50 p-4 rounded-sm">
       <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">
         {label}
       </div>
-      <div className="font-mono text-2xl leading-none text-chalk">{value}</div>
+      <div
+        className={`font-mono text-2xl leading-none ${
+          tone === "amber" ? "text-amber" : "text-chalk"
+        }`}
+      >
+        {value}
+      </div>
     </div>
   );
 }

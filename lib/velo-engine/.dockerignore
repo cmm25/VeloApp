@@ -1,0 +1,15 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.env.*
+!.env.example
+.venv
+venv
+*.log
+.DS_Store
+custom_models/*.pt
+custom_models/*.pth
+custom_models/*.onnx
+custom_models/*.tflite
