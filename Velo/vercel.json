@@ -1,7 +1,7 @@
 {
     "outputDirectory": "dist/public",
     "rewrites": [
-        { "source": "/api/(.*)", "destination": "https://YOUR-RUNNER-URL/api/$1" },
+        { "source": "/api/(.*)", "destination": "https://veloapp-agents.onrender.com/api/$1" },
         { "source": "/(.*)", "destination": "/index.html" }
     ]
 }
