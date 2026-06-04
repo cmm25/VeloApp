@@ -1,16 +1,18 @@
 """
 Analyzer factory.
 
-Reads ANALYZER_BACKEND from the environment (default: mediapipe) and returns
-the corresponding VideoAnalyzer instance.  The engine's HTTP handler calls
-only the VideoAnalyzer interface, so this is the single place where the
-backend choice is made.
+Selects the pose-analysis backend and returns a singleton VideoAnalyzer. The
+engine's HTTP handler calls only the VideoAnalyzer interface, so this is the
+single place the backend choice is made.
 
-Supported values for ANALYZER_BACKEND
---------------------------------------
-mediapipe   Use Google MediaPipe Pose (default, no extra setup needed).
-custom      Use the custom trained model in analyzer_custom.py.
-            Requires CUSTOM_MODEL_PATH to point to your weights file.
+Backend env var (unified)
+--------------------------
+VISION_ENGINE (preferred), falling back to ANALYZER_BACKEND (legacy alias).
+
+  yolo       YOLO11-pose, v2 nested telemetry (DEFAULT, going-forward).
+  mediapipe  DEMOTED this cycle — emits legacy flat v1 telemetry, which the v2
+             /analyze route can no longer serialize. Raises until ported to v2.
+  custom     DEMOTED — stub (analyzer_custom.py) is unimplemented.
 """
 
 import logging
@@ -20,15 +22,29 @@ from .analyzer_base import VideoAnalyzer
 
 log = logging.getLogger("factory")
 
-_BACKEND = os.environ.get("ANALYZER_BACKEND", "mediapipe").lower().strip()
+# VISION_ENGINE is the going-forward name; ANALYZER_BACKEND kept as a read-fallback
+# alias for one release so existing deploys don't break. Default: yolo.
+_BACKEND = (
+    os.environ.get("VISION_ENGINE")
+    or os.environ.get("ANALYZER_BACKEND")
+    or "yolo"
+).lower().strip()
 _instance: VideoAnalyzer | None = None
+
+_DEMOTED = {
+    "mediapipe": (
+        "MediaPipe backend is demoted this cycle: it emits legacy flat v1 telemetry, "
+        "which the v2 /analyze route cannot serialize. Use VISION_ENGINE=yolo, or port "
+        "MediaPipeAnalyzer to emit v2 TennisTelemetry first."
+    ),
+    "custom": (
+        "Custom backend (analyzer_custom.py) is an unimplemented stub. Use VISION_ENGINE=yolo."
+    ),
+}
 
 
 def get_analyzer() -> VideoAnalyzer:
-    """
-    Return the singleton analyzer for this process.
-    Instantiated lazily on first call so startup is fast.
-    """
+    """Return the process-wide singleton analyzer (lazily built on first call)."""
     global _instance
     if _instance is None:
         _instance = _build()
@@ -36,17 +52,15 @@ def get_analyzer() -> VideoAnalyzer:
 
 
 def _build() -> VideoAnalyzer:
-    if _BACKEND == "custom":
-        log.info("Analyzer backend: custom model")
-        from .analyzer_custom import CustomModelAnalyzer
-        return CustomModelAnalyzer()
+    if _BACKEND == "yolo":
+        log.info("Analyzer backend: YOLO11-pose (v2)")
+        from .analyzer_yolo import YoloAnalyzer
+        return YoloAnalyzer()
 
-    if _BACKEND == "mediapipe":
-        log.info("Analyzer backend: MediaPipe")
-        from .analyzer_mediapipe import MediaPipeAnalyzer
-        return MediaPipeAnalyzer()
+    if _BACKEND in _DEMOTED:
+        raise NotImplementedError(_DEMOTED[_BACKEND])
 
     raise ValueError(
-        f"Unknown ANALYZER_BACKEND='{_BACKEND}'. "
-        "Supported values: mediapipe, custom"
+        f"Unknown VISION_ENGINE/ANALYZER_BACKEND='{_BACKEND}'. Supported: yolo "
+        "(mediapipe and custom are demoted this cycle)."
     )

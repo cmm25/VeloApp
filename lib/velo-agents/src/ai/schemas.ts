@@ -1,13 +1,18 @@
 import { z } from "zod";
 
-// MediaPipe telemetry (from velo-engine)
+// Tennis pose telemetry (from velo-engine). The engine emits the v2 nested
+// object; form-agent.normalizeTelemetry flattens its `summary` block to this
+// shape and grafts the optional v2 honesty signals below.
 
 export const JointAnglesSchema = z.object({
   shoulder: z.number().describe("Elbow-shoulder-hip angle in degrees"),
   elbow: z.number().describe("Wrist-elbow-shoulder angle in degrees"),
-  wrist: z.number().describe("Index-wrist-elbow angle in degrees"),
+  wrist: z.number().describe("Forearm-orientation PROXY vs image vertical (NOT anatomical wrist flexion)"),
   hip: z.number().describe("Shoulder-hip-knee angle in degrees"),
   knee: z.number().describe("Hip-knee-ankle angle in degrees"),
+  // v2 honesty flags (optional; engine sets them, mock/v1 omit them).
+  wristIsProxy: z.boolean().optional(),
+  racketFaceDeg: z.number().nullish(),
 });
 
 export const StrokePhaseSchema = z.object({
@@ -28,11 +33,35 @@ export const TennisTelemetrySchema = z.object({
   strokePhases: z.array(StrokePhaseSchema),
   peakAngles: JointAnglesSchema,
   avgAngles: JointAnglesSchema,
-  symmetryScore: z.number().min(0).max(1).describe("0=asymmetric, 1=perfect symmetry"),
+  symmetryScore: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("Temporal repeatability of angles across strokes (NOT left/right symmetry). 0=variable, 1=consistent"),
   dominantStroke: z.enum(["forehand", "backhand", "serve", "volley", "unknown"]),
   strokeCount: z.number(),
   analysisNotes: z.string().optional(),
   isMock: z.boolean().default(false),
+
+  // ── v2 honesty signals (all OPTIONAL — grafted from engine.summary/aggregate/engine;
+  // absent on mock/v1 payloads). Never make these required or the live path breaks. ──
+  velocityScaleSource: z
+    .enum(["torso_length", "court_homography", "pixels", "unknown"])
+    .nullish()
+    .describe("Scale basis for velocities. NOT court_homography ⇒ velocities are relative, NEVER mph/metric."),
+  timingGranularityMs: z.number().nullish().describe("ms between analyzed frames; timing finer than this is unresolved"),
+  normalizedCfr: z.boolean().nullish(),
+  kinematicSequenceValid: z
+    .boolean()
+    .nullish()
+    .describe("True if a resolvable, textbook proximal→distal sequence was found (null ⇒ not resolvable at this fps)"),
+  sequenceCoherenceScore: z.number().min(0).max(1).nullish().describe("Coarse peak-order agreement (ordinal, ties common)"),
+  peakProximalToDistalGain: z
+    .number()
+    .min(0)
+    .max(1)
+    .nullish()
+    .describe("Did peak speed increase hips→trunk→arm (PRIMARY, ball-speed-correlated signal). 1.0=textbook chain"),
 });
 
 export type TennisTelemetry = z.infer<typeof TennisTelemetrySchema>;

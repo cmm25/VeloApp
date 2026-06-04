@@ -1,21 +1,14 @@
 """
-Velo Vision Engine — FastAPI pose analysis sidecar
+Velo Vision Engine — FastAPI pose-analysis sidecar.
 
-Analyzes tennis videos and returns structured biomechanical telemetry for the
-Velo agent runner.  The analysis backend is selected at startup via the
-ANALYZER_BACKEND environment variable (default: mediapipe).
+Analyzes a tennis video and returns the v2 `TennisTelemetry` contract consumed
+by the Velo Form Agent. The backend is selected via VISION_ENGINE (default yolo)
+through the analyzer factory; the HTTP layer only ever touches the VideoAnalyzer
+interface and serializes camelCase (by_alias) so the agent contract holds.
 
 Run locally:
   pip install -r requirements.txt
   uvicorn src.main:app --reload --port 8000
-
-Run with a custom model:
-  ANALYZER_BACKEND=custom CUSTOM_MODEL_PATH=custom_models/model.onnx \
-  uvicorn src.main:app --reload --port 8000
-
-Run with Docker:
-  docker build -t velo-engine .
-  docker run -p 8000:8000 -e ANALYZER_BACKEND=mediapipe velo-engine
 """
 
 import asyncio
@@ -25,10 +18,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from .models import AnalyzeRequest, TennisTelemetry
-from .analyze import download_video
 from .factory import get_analyzer
+from .models import AnalyzeRequest, TennisTelemetry
+from .video_io import download_video
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -36,21 +30,35 @@ logging.basicConfig(
 )
 log = logging.getLogger("main")
 
-_BACKEND = os.environ.get("ANALYZER_BACKEND", "mediapipe").lower().strip()
+# Resolved backend label for /healthz (matches factory's selection logic).
+VISION_ENGINE = (
+    os.environ.get("VISION_ENGINE") or os.environ.get("ANALYZER_BACKEND") or "yolo"
+).lower().strip()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log.info(f"Velo Vision Engine starting up (backend: {_BACKEND})…")
-    get_analyzer()
+    log.info(f"Velo Vision Engine starting up (engine={VISION_ENGINE})…")
+    app.state.warmup_error = None
+    try:
+        # Eager-build the analyzer so the model warms before the first request.
+        await asyncio.get_event_loop().run_in_executor(None, get_analyzer)
+        log.info("Analyzer ready.")
+    except (NotImplementedError, ValueError):
+        # Misconfiguration (demoted/unknown backend) must NOT boot "ok" — fail fast
+        # so the orchestrator restarts/alerts instead of serving a lying-healthy process.
+        raise
+    except Exception as e:  # transient (e.g. weights volume not yet mounted) — degrade, surfaced via /healthz
+        app.state.warmup_error = str(e)
+        log.warning(f"Analyzer warmup failed (will retry on first request): {e}")
     yield
     log.info("Velo Vision Engine shutting down…")
 
 
 app = FastAPI(
     title="Velo Vision Engine",
-    description="Tennis pose analysis sidecar for the Velo agent runner",
-    version="1.0.0",
+    description="Deterministic tennis pose analysis sidecar (YOLO11-pose, v2 telemetry)",
+    version="2.1.0",
     lifespan=lifespan,
 )
 
@@ -65,21 +73,23 @@ app.add_middleware(
 @app.get("/healthz")
 async def healthz():
     """Health check — used by precheck.ts and the Docker HEALTHCHECK."""
-    return {
-        "status": "ok",
-        "version": "1.0.0",
-        "backend": _BACKEND,
-    }
+    err = getattr(app.state, "warmup_error", None)
+    if err:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "version": "2.1.0", "engine": VISION_ENGINE, "error": err},
+        )
+    return {"status": "ok", "version": "2.1.0", "engine": VISION_ENGINE}
 
 
-@app.post("/analyze", response_model=TennisTelemetry)
+@app.post("/analyze", response_model=TennisTelemetry, response_model_by_alias=True)
 async def analyze(req: AnalyzeRequest):
     """
-    Analyze a tennis video and return pose telemetry.
+    Analyze a tennis video and return v2 TennisTelemetry.
 
-    Downloads the video from the provided URL (IPFS gateway or direct link),
-    runs the configured analysis backend frame-by-frame, and returns structured
-    TennisTelemetry JSON consumed by the Velo Form Agent.
+    Downloads the clip, runs the configured backend (Pass-0 CFR normalization +
+    pose + deterministic NumPy kinematics), and returns camelCase telemetry the
+    Form Agent validates against its Zod schema.
     """
     log.info(f"Analyze request: url={req.video_url[:80]}… cid={req.video_cid}")
 
@@ -94,24 +104,26 @@ async def analyze(req: AnalyzeRequest):
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             None,
-            analyzer.analyze_file,
-            tmp_path,
-            req.video_url,
-            req.sample_rate,
-            req.max_duration_s,
+            lambda: analyzer.analyze_file(
+                tmp_path,
+                req.video_url,
+                req.sample_rate,
+                req.max_duration_s,
+                req,
+            ),
         )
 
         log.info(
-            f"Analysis complete: backend={_BACKEND} stroke={result.dominant_stroke} "
-            f"frames={result.frames_analyzed} symmetry={result.symmetry_score:.2f}"
+            f"Analysis complete: engine={VISION_ENGINE} stroke={result.aggregate.dominant_stroke} "
+            f"frames={result.video.frames_analyzed} consistency={result.aggregate.consistency_score:.2f}"
         )
-        return result
+        return JSONResponse(result.model_dump(by_alias=True, mode="json"))
 
     except ValueError as e:
         log.error(f"Analysis failed (bad input): {e}")
         raise HTTPException(status_code=422, detail=str(e))
     except NotImplementedError as e:
-        log.error(f"Backend not implemented: {e}")
+        log.error(f"Backend not available: {e}")
         raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         log.error(f"Analysis failed: {e}", exc_info=True)

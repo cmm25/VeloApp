@@ -1,8 +1,19 @@
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
-mediapipe==0.10.18
 opencv-python-headless==4.10.0.84
 numpy==1.26.4
+# scipy: zero-phase Butterworth (filtfilt) + find_peaks for the deterministic
+# kinematics/signal layer. 1.13.x is compatible with the numpy==1.26.4 pin
+# (ultralytics 8.3.40 needs numpy<2 for np.trapz).
+scipy==1.13.1
 httpx==0.28.1
 pydantic==2.10.4
 python-multipart==0.0.20
+
+# Tier-1 pose engine (going-forward). Pulls torch (CPU on the slim image).
+ultralytics==8.3.40
+lapx==0.9.4
+
+# MediaPipe — DEMOTED this cycle (factory raises for it; emits legacy flat v1).
+# Re-enable only if MediaPipeAnalyzer is ported to v2 telemetry.
+# mediapipe==0.10.18

@@ -69,3 +69,13 @@ scripts/
 /reference-files-eshaan/
 .agents/
 .docs/
+
+# ── ML model weights & training artifacts (never commit binaries) ─────────────
+*.pt
+*.onnx
+*.engine
+*.tflite
+runs/
+lib/velo-engine/overlays/
+lib/velo-engine/custom_models/*
+!lib/velo-engine/custom_models/.gitkeep

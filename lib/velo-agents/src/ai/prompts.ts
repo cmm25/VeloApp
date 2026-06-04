@@ -9,6 +9,33 @@ export function buildFormAnalysisPrompt(telemetry: TennisTelemetry): string {
     )
     .join("\n");
 
+  const pct = (v?: number | null) => (v == null ? "n/a" : `${(v * 100).toFixed(0)}%`);
+
+  const kineticSection =
+    telemetry.peakProximalToDistalGain != null
+      ? `
+Kinematic sequence (proximal→distal energy transfer):
+- Proximal→distal speed gain: ${pct(telemetry.peakProximalToDistalGain)} (PRIMARY signal — did peak speed rise hips→trunk→arm; 100% = textbook chain)
+- Peak-timing order: ${
+          telemetry.kinematicSequenceValid == null
+            ? "NOT RESOLVABLE at this frame rate — do NOT comment on sequence timing or order"
+            : telemetry.kinematicSequenceValid
+              ? `valid — hips lead the arm (coherence ${pct(telemetry.sequenceCoherenceScore)})`
+              : "checked but not textbook — hips did not clearly lead the arm"
+        }`
+      : "";
+
+  const caveats = `
+MEASUREMENT CAVEATS — you MUST obey these (the data cannot support violating them):
+- "Wrist" is a FOREARM-ORIENTATION proxy, NOT anatomical wrist flexion — never diagnose wrist snap/flexion.
+- The consistency score (${(telemetry.symmetryScore * 100).toFixed(0)}%) is temporal REPEATABILITY across strokes, NOT left/right symmetry.
+- Velocities are scaled by "${telemetry.velocityScaleSource ?? "unknown"}" — relative within this clip only. NEVER convert to mph/kph/m·s or any real-world speed.${
+    telemetry.timingGranularityMs
+      ? `\n- Frame granularity ≈${telemetry.timingGranularityMs.toFixed(0)}ms; never claim timing precision finer than this.`
+      : ""
+  }
+- Only discuss kinematic-sequence order if it is marked resolvable above; otherwise stay silent on timing.`;
+
   return `You are a professional tennis biomechanics analyst. Analyze the following pose telemetry data from a tennis video and produce a structured form analysis report.
 
 TELEMETRY DATA:
@@ -16,7 +43,7 @@ TELEMETRY DATA:
 - Duration: ${(telemetry.durationMs / 1000).toFixed(1)}s
 - Frames analyzed: ${telemetry.framesAnalyzed}
 - Stroke count detected: ${telemetry.strokeCount}
-- Symmetry score: ${(telemetry.symmetryScore * 100).toFixed(0)}% (100% = perfect)
+- Consistency (temporal repeatability across strokes, NOT symmetry): ${(telemetry.symmetryScore * 100).toFixed(0)}%
 
 Peak angles (degrees):
   Shoulder: ${telemetry.peakAngles.shoulder.toFixed(1)}°
@@ -34,8 +61,9 @@ Average angles (degrees):
 
 Stroke phase breakdown:
 ${phases}
-
+${kineticSection}
 ${telemetry.analysisNotes ? `Vision engine notes: ${telemetry.analysisNotes}` : ""}
+${caveats}
 
 TASK:
 Return a JSON object matching this schema exactly:

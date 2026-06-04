@@ -6,7 +6,8 @@ import { resolveVideoUrl } from "../ipfs/pinata.js";
 import { pinJson } from "../ipfs/pinata.js";
 import { reason } from "../ai/dispatch.js";
 import { buildFormAnalysisPrompt } from "../ai/prompts.js";
-import { FormReportSchema, TennisTelemetrySchema, type TennisTelemetry } from "../ai/schemas.js";
+import { FormReportSchema, type TennisTelemetry } from "../ai/schemas.js";
+import { normalizeTelemetry } from "../ai/normalize-telemetry.js";
 import {
   getFormAgentWallet,
   fetchNonce,
@@ -180,39 +181,6 @@ async function fetchTelemetry(
 
   const raw = (await res.json()) as unknown;
   return normalizeTelemetry(raw);
-}
-
-/**
- * The velo-engine (Python/Pydantic) returns telemetry with snake_case keys
- * (e.g. `stroke_phases`, `frame_index`), but the agent and the Zod schema use
- * camelCase. Convert at the boundary, then validate so any shape drift fails
- * with a descriptive error instead of a cryptic downstream crash.
- */
-function normalizeTelemetry(raw: unknown): TennisTelemetry {
-  const camel = snakeToCamelDeep(raw);
-  const result = TennisTelemetrySchema.safeParse(camel);
-  if (!result.success) {
-    const issues = result.error.errors
-      .map((e) => `${e.path.join(".") || "(root)"}: ${e.message}`)
-      .join("; ");
-    throw new Error(`Vision engine telemetry failed validation: ${issues}`);
-  }
-  return result.data;
-}
-
-/** Recursively convert snake_case object keys to camelCase (values untouched). */
-function snakeToCamelDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(snakeToCamelDeep);
-  if (value && typeof value === "object") {
-    // null prototype so hostile keys like "__proto__" can't pollute prototypes
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const camelKey = k.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
-      out[camelKey] = snakeToCamelDeep(v);
-    }
-    return out;
-  }
-  return value;
 }
 
 // Mock telemetry — used when VISION_MODE=mock or video CID is local

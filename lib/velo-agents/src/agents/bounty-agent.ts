@@ -5,7 +5,8 @@ import { withRetry } from "../utils/retry.js";
 import { resolveVideoUrl, pinJson } from "../ipfs/pinata.js";
 import { reason } from "../ai/dispatch.js";
 import { buildFormAnalysisPrompt } from "../ai/prompts.js";
-import { FormReportSchema, TennisTelemetrySchema, type TennisTelemetry } from "../ai/schemas.js";
+import { FormReportSchema, type TennisTelemetry } from "../ai/schemas.js";
+import { normalizeTelemetry } from "../ai/normalize-telemetry.js";
 import {
   getFormAgentWallet,
   getBountyExtension,
@@ -210,31 +211,6 @@ async function fetchTelemetry(
 
   const raw = (await res.json()) as unknown;
   return normalizeTelemetry(raw);
-}
-
-function normalizeTelemetry(raw: unknown): TennisTelemetry {
-  const camel = snakeToCamelDeep(raw);
-  const result = TennisTelemetrySchema.safeParse(camel);
-  if (!result.success) {
-    const issues = result.error.errors
-      .map((e) => `${e.path.join(".") || "(root)"}: ${e.message}`)
-      .join("; ");
-    throw new Error(`Vision engine telemetry failed validation: ${issues}`);
-  }
-  return result.data;
-}
-
-function snakeToCamelDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(snakeToCamelDeep);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = Object.create(null);
-    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-      const camelKey = k.replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());
-      out[camelKey] = snakeToCamelDeep(v);
-    }
-    return out;
-  }
-  return value;
 }
 
 function buildMockTelemetry(videoCid: string): TennisTelemetry {
