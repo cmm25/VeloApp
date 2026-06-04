@@ -10,6 +10,8 @@ import {
   useExpireBounty,
   usePlaceBid,
   useBountyReport,
+  usePendingOf,
+  useWithdrawBounty,
   parseSttToWei,
   describeBidError,
   type TimelineEntry,
@@ -38,6 +40,7 @@ import {
   Loader2,
   Award,
   Link2,
+  Coins,
 } from "lucide-react";
 import { toast } from "sonner";
 import { StatusBadge } from "./BountiesBoard";
@@ -53,10 +56,12 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
   const { data: bounty, isLoading, refetch: refetchBounty } = useBounty(idNum);
   const { bids, refetch: refetchBids } = useBids(idNum);
   const timelineQ = useBountyTimeline(idNum);
+  const { address: me } = useAccount();
   const { accept, isPending: acceptPending } = useAcceptBid();
   const { expire, isPending: expirePending } = useExpireBounty();
   const { placeBid, isPending: bidPending } = usePlaceBid();
-  const { address: me } = useAccount();
+  const { withdraw, isPending: withdrawPending } = useWithdrawBounty();
+  const { data: pendingBalance, refetch: refetchPending } = usePendingOf(me);
 
   const [bidFee, setBidFee] = useState("");
   const [bidDeadlineHours, setBidDeadlineHours] = useState(24);
@@ -175,6 +180,39 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                 />
               </dl>
             </section>
+
+            {pendingBalance !== undefined && pendingBalance > 0n && (
+              <div className="mb-6 p-4 border border-amber/40 bg-amber/[0.05] rounded-sm flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <Coins className="w-4 h-4 text-amber shrink-0" />
+                  <div>
+                    <div className="text-sm font-medium text-chalk">
+                      {formatStt(pendingBalance)} claimable
+                    </div>
+                    <p className="text-xs text-muted-foreground font-light">
+                      Escrow funds are ready to withdraw to your wallet.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  disabled={withdrawPending}
+                  onClick={async () => {
+                    try {
+                      await withdraw();
+                      toast.success("Withdrawn to your wallet");
+                      refetchPending();
+                    } catch (e) {
+                      toast.error("Withdrawal failed", {
+                        description: e instanceof Error ? e.message : String(e),
+                      });
+                    }
+                  }}
+                  className="shrink-0 px-4 py-2 bg-amber hover:bg-amber-soft text-ink text-[10px] uppercase tracking-widest font-bold rounded-sm disabled:opacity-50"
+                >
+                  {withdrawPending ? "Claiming…" : "Claim"}
+                </button>
+              </div>
+            )}
 
             {isExpired && (
               <div className="mb-10 p-5 border border-destructive/30 bg-destructive/5 rounded-sm flex items-start justify-between gap-4">
@@ -306,6 +344,7 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                       agent={b.agent}
                       proposedFee={b.proposedFee}
                       placedAt={b.placedAt}
+                      escrow={bounty.escrow}
                       canAccept={isPoster && bounty.status === "Open"}
                       isAccepted={
                         bounty.status !== "Open" &&
@@ -319,7 +358,7 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                           refetchBounty();
                         } catch (e) {
                           toast.error("Accept failed", {
-                            description: e instanceof Error ? e.message : String(e),
+                            description: describeBidError(e),
                           });
                         }
                       }}
@@ -497,6 +536,7 @@ function BidRow({
   agent,
   proposedFee,
   placedAt,
+  escrow,
   canAccept,
   isAccepted,
   onAccept,
@@ -505,12 +545,14 @@ function BidRow({
   agent: Address;
   proposedFee: bigint;
   placedAt: bigint;
+  escrow: bigint;
   canAccept: boolean;
   isAccepted: boolean;
   onAccept: () => void;
   busy: boolean;
 }) {
   const { data: ag } = useAgent(agent);
+  const exceedsEscrow = proposedFee > escrow;
   return (
     <li className="flex items-center gap-4 px-4 py-3">
       <div className="w-9 h-9 rounded-sm bg-amber/10 border border-amber/30 flex items-center justify-center shrink-0">
@@ -534,6 +576,11 @@ function BidRow({
               <CheckCircle2 className="w-3 h-3" /> Lead
             </span>
           )}
+          {canAccept && exceedsEscrow && (
+            <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold text-destructive bg-destructive/10 border border-destructive/30 px-1.5 py-0.5 rounded-sm">
+              <AlertTriangle className="w-3 h-3" /> Exceeds escrow
+            </span>
+          )}
         </div>
         <div className="font-mono text-[10px] text-muted-foreground truncate">
           {shortAddr(agent, 6, 4)} ·{" "}
@@ -542,12 +589,15 @@ function BidRow({
             : "—"}
         </div>
       </div>
-      <div className="font-mono text-sm text-amber shrink-0">{formatStt(proposedFee)}</div>
+      <div className={`font-mono text-sm shrink-0 ${exceedsEscrow ? "text-destructive/70" : "text-amber"}`}>
+        {formatStt(proposedFee)}
+      </div>
       {canAccept && (
         <button
           onClick={onAccept}
-          disabled={busy}
-          className="shrink-0 px-3 py-1.5 bg-amber hover:bg-amber-soft text-ink text-[10px] uppercase tracking-widest font-bold rounded-sm disabled:opacity-50"
+          disabled={busy || exceedsEscrow}
+          title={exceedsEscrow ? `Bid (${formatStt(proposedFee)}) exceeds escrow (${formatStt(escrow)})` : undefined}
+          className="shrink-0 px-3 py-1.5 bg-amber hover:bg-amber-soft text-ink text-[10px] uppercase tracking-widest font-bold rounded-sm disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Accept
         </button>
