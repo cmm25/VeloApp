@@ -19,6 +19,7 @@ import type {
   AgentRegistry,
   Reputation,
   BountyExtension,
+  AthleteSBT,
 } from "../typechain-types";
 
 const ZERO32 = "0x" + "0".repeat(64);
@@ -62,11 +63,16 @@ async function deployAll() {
   const rep = (await Rep.deploy(admin.address)) as unknown as Reputation;
   await rep.waitForDeployment();
 
+  const Sbt = await getContractFactory("AthleteSBT");
+  const sbt = (await Sbt.deploy(admin.address)) as unknown as AthleteSBT;
+  await sbt.waitForDeployment();
+
   const Bounty = await getContractFactory("BountyExtension");
   const bounty = (await Bounty.deploy(
     await reg.getAddress(),
     await rep.getAddress(),
     parseEther("0.001"),
+    await sbt.getAddress(),
   )) as unknown as BountyExtension;
   await bounty.waitForDeployment();
 
@@ -74,6 +80,12 @@ async function deployAll() {
     await rep
       .connect(admin)
       .grantRole(await rep.ORCHESTRATOR_ROLE(), await bounty.getAddress())
+  ).wait();
+
+  await (
+    await sbt
+      .connect(admin)
+      .grantRole(await sbt.APPENDER_ROLE(), await bounty.getAddress())
   ).wait();
 
   await reg.connect(lead).register("lead", "u", [skill("vision.pose")], 1n);
@@ -98,6 +110,7 @@ async function deployAll() {
     stranger,
     reg,
     rep,
+    sbt,
     bounty,
     domain,
   };
@@ -145,7 +158,7 @@ function makeReceipt(
 
 describe("BountyExtension", () => {
   it("post → bid → accept → subContract → settleWithSplits (happy path)", async () => {
-    const { poster, athlete, lead, sub1, bounty, rep, domain } =
+    const { poster, athlete, lead, sub1, bounty, rep, sbt, domain } =
       await deployAll();
     const fee = parseEther("0.1");
     const { bountyId, deadline } = await postOpen(bounty, poster, athlete, fee);
@@ -184,6 +197,13 @@ describe("BountyExtension", () => {
 
     expect(await rep.jobsCompleted(lead.address)).to.equal(1n);
     expect(await rep.jobsCompleted(sub1.address)).to.equal(1n);
+
+    expect(await sbt.receiptCount(athlete.address)).to.equal(1n);
+    const ref = await sbt.receiptAt(athlete.address, 0);
+    expect(ref.jobId).to.equal(zeroPadValue(toBeHex(bountyId), 32));
+    expect(ref.ipfsCid).to.equal("bafyLead");
+    expect(ref.formAgent.toLowerCase()).to.equal(lead.address.toLowerCase());
+    expect(ref.prescriptionAgent).to.equal("0x0000000000000000000000000000000000000000");
 
     await (await bounty.connect(lead).withdraw()).wait();
     expect(await bounty.pendingOf(lead.address)).to.equal(0n);

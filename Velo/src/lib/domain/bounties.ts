@@ -400,6 +400,8 @@ const BID_ERROR_MESSAGES: Record<string, string> = {
   DeadlinePassed: "This bounty's deadline has already passed.",
   BountyNotOpen: "This bounty is no longer open for bids.",
   BountyNotFound: "This bounty could not be found.",
+  FeeBelowMin:
+    "This bid's fee exceeds the bounty escrow — accept a bid whose fee is ≤ the escrowed amount.",
 };
 
 /** Turn a thrown bid error into a human-readable message. */
@@ -419,11 +421,39 @@ export function describeBidError(e: unknown): string {
       return "Transaction rejected in your wallet.";
     }
     if (/invalid transaction/i.test(short)) {
-      return "The bid was rejected on-chain. Make sure your wallet is a registered agent eligible for this bounty.";
+      return "Transaction rejected on-chain. Common causes: bid fee exceeds escrow, or your agent is not eligible for this bounty.";
     }
     return short;
   }
   return e instanceof Error ? e.message : String(e);
+}
+
+export function usePendingOf(address: Address | undefined) {
+  const ext = bountyExtensionAddress();
+  return useReadContract({
+    address: ext ?? undefined,
+    abi: bountyExtensionAbi,
+    functionName: "pendingOf",
+    args: address ? [address] : undefined,
+    query: { enabled: !!ext && !!address, refetchInterval: 10_000 },
+  });
+}
+
+export function useWithdrawBounty() {
+  const ext = bountyExtensionAddress();
+  const { writeContractAsync, ...rest } = useWriteContract();
+  return {
+    ...rest,
+    withdraw: async () => {
+      if (!ext) throw new Error("BountyExtension not deployed");
+      return writeContractAsync({
+        address: ext,
+        abi: bountyExtensionAbi,
+        functionName: "withdraw",
+        args: [],
+      });
+    },
+  };
 }
 
 export function usePlaceBid() {

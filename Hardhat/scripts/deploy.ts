@@ -191,7 +191,8 @@ async function main() {
       const ext = await ethers.getContractAt("BountyExtension", bountyAddr);
       if (
         safeLower(await ext.agentRegistry()) !== safeLower(registryAddr) ||
-        safeLower(await ext.reputation()) !== safeLower(repAddr)
+        safeLower(await ext.reputation()) !== safeLower(repAddr) ||
+        safeLower(await ext.athleteSbt()) !== safeLower(sbtAddr)
       ) {
         console.log("BountyExtension mismatch → redeploy");
         bountyAddr = undefined;
@@ -201,7 +202,7 @@ async function main() {
 
   if (!bountyAddr) {
     const Bounty = await ethers.getContractFactory("BountyExtension");
-    const bounty = await Bounty.deploy(registryAddr, repAddr, minBountyFee);
+    const bounty = await Bounty.deploy(registryAddr, repAddr, minBountyFee, sbtAddr);
     await bounty.waitForDeployment();
     bountyAddr = await bounty.getAddress();
     console.log(`BountyExtension → ${bountyAddr}`);
@@ -218,6 +219,12 @@ async function main() {
   }
 
   const sbt = await ethers.getContractAt("AthleteSBT", sbtAddr);
+  const APPENDER_ROLE = await sbt.APPENDER_ROLE();
+  if (!(await sbt.hasRole(APPENDER_ROLE, bountyAddr))) {
+    await (await sbt.grantRole(APPENDER_ROLE, bountyAddr)).wait();
+    console.log("  ✓ BountyExtension can append to AthleteSBT");
+  }
+
   const currentCR = await sbt.coachRegistry();
   if (safeLower(currentCR) !== safeLower(coachAddr)) {
     await (await sbt.setCoachRegistry(coachAddr)).wait();
