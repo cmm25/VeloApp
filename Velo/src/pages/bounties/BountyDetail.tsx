@@ -146,10 +146,12 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
               </div>
               <div className="flex flex-col gap-1 text-right shrink-0">
                 <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground">
-                  Escrow
+                  {bounty.status === "Settled" ? "Paid out" : "Escrow"}
                 </div>
                 <div className="font-mono text-amber text-xl">
-                  {formatStt(bounty.escrow)}
+                  {formatStt(
+                    bounty.status === "Settled" ? bounty.acceptedFee : bounty.escrow,
+                  )}
                 </div>
                 <div className="text-[10px] font-mono text-muted-foreground">
                   deadline {timeUntil(bounty.deadline)}
@@ -348,7 +350,8 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                       canAccept={isPoster && bounty.status === "Open"}
                       isAccepted={
                         bounty.status !== "Open" &&
-                        bounty.leadAgent.toLowerCase() === b.agent.toLowerCase()
+                        bounty.leadAgent.toLowerCase() === b.agent.toLowerCase() &&
+                        b.proposedFee === bounty.acceptedFee
                       }
                       onAccept={async () => {
                         try {
