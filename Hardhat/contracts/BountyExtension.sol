@@ -7,17 +7,16 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {ReceiptLib} from "./libraries/ReceiptLib.sol";
 import {AgentRegistry} from "./AgentRegistry.sol";
 import {Reputation} from "./Reputation.sol";
+import {IAthleteSBT} from "./interfaces/IAthleteSBT.sol";
 
 /// @title BountyExtension
 /// @notice Standalone bounty marketplace: poster escrows funds, registered
 ///         agents bid, poster accepts a bid, the lead agent may sub-contract
 ///         to other registered agents, and on settle the escrow is split
 ///         pull-payment style by the supplied `splits` array.
-/// @dev    NatSpec scope decision: this contract does NOT append to
-///         AthleteSBT. v1 keeps the SBT a record of the direct-pay flow only;
-///         bounty receipts are queryable from this contract's events. A
-///         future version may bridge selected bounty completions into the SBT
-///         via a separate appender role.
+///
+///         On settlement the athlete automatically receives a receipt in their
+///         AthleteSBT, identical in structure to the direct-pay flow.
 ///
 ///         EIP-712 domain is `("VeloBounty","1")`. Agent receipts are signed
 ///         against this contract's domain separator and re-use `ReceiptLib`
@@ -58,6 +57,7 @@ contract BountyExtension is EIP712, ReentrancyGuard {
 
     AgentRegistry public immutable agentRegistry;
     Reputation public immutable reputation;
+    IAthleteSBT public immutable athleteSbt;
     uint256 public immutable minBountyFee;
 
     uint16 internal constant BPS_DENOM = 10_000;
@@ -139,11 +139,15 @@ contract BountyExtension is EIP712, ReentrancyGuard {
     constructor(
         address registry,
         address reputation_,
-        uint256 minBountyFee_
+        uint256 minBountyFee_,
+        address athleteSbt_
     ) EIP712("VeloBounty", "1") {
-        if (registry == address(0) || reputation_ == address(0)) revert ZeroAddress();
+        if (registry == address(0) || reputation_ == address(0) || athleteSbt_ == address(0)) {
+            revert ZeroAddress();
+        }
         agentRegistry = AgentRegistry(registry);
         reputation = Reputation(reputation_);
+        athleteSbt = IAthleteSBT(athleteSbt_);
         minBountyFee = minBountyFee_;
     }
 
@@ -260,7 +264,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
 
         bytes32 expectedJobId = bytes32(bountyId);
 
-        // Lead receipt.
         _verifyReceipt(b, leadReceipt, leadSig, expectedJobId, b.leadAgent);
         emit ReceiptRecorded(
             bountyId,
@@ -270,7 +273,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
             leadReceipt.summary
         );
 
-        // Sub receipts.
         for (uint256 i = 0; i < subReceipts.length; i++) {
             ReceiptLib.Receipt calldata r = subReceipts[i];
             if (!_isSubAgent[bountyId][r.agent]) revert ReceiptAgentNotInJob(r.agent);
@@ -284,9 +286,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
             );
         }
 
-        // Compute split totals (lead receives remainder). Reject duplicate
-        // recipients so reputation cannot be inflated by repeated entries for
-        // the same agent within one settlement.
         uint256 total = b.escrow;
         uint256 totalBps;
         for (uint256 i = 0; i < splits.length; i++) {
@@ -296,9 +295,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
             for (uint256 j = 0; j < i; j++) {
                 if (splits[j].agent == agent) revert DuplicateSplitRecipient(agent);
             }
-            // Each split recipient must have produced a verified sub-receipt
-            // in this settlement. Reputation may only mutate after a signed
-            // receipt is on record.
             bool seen = false;
             for (uint256 k = 0; k < subReceipts.length; k++) {
                 if (subReceipts[k].agent == agent) {
@@ -311,7 +307,6 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         }
         if (totalBps > BPS_DENOM) revert SplitsOverflow(totalBps);
 
-        // Effects: clear escrow, distribute.
         b.escrow = 0;
         b.status = BountyStatus.Settled;
 
@@ -331,6 +326,18 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         }
 
         emit Settled(bountyId, b.leadAgent, total, splits);
+
+        athleteSbt.appendReceipt(
+            b.athlete,
+            IAthleteSBT.ReceiptRef({
+                jobId: expectedJobId,
+                ipfsCid: leadReceipt.ipfsCid,
+                summaryHash: leadReceipt.summaryHash,
+                timestamp: uint64(block.timestamp),
+                formAgent: b.leadAgent,
+                prescriptionAgent: address(0)
+            })
+        );
     }
 
     function expireBounty(uint256 bountyId) external nonReentrant {

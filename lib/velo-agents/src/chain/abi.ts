@@ -12,6 +12,7 @@ export const BOUNTY_EXTENSION_ABI = [
   "function getBounty(uint256 bountyId) view returns ((address poster, address athlete, string videoCid, uint64 deadline, uint64 createdAt, uint256 escrow, address leadAgent, uint256 acceptedFee, uint8 status, bytes32[] requiredSkills))",
   "function nonceOf(address agent) view returns (uint256)",
   "function domainSeparator() view returns (bytes32)",
+  "function athleteSbt() view returns (address)",
 ] as const;
 
 export interface BountyAcceptedEvent {
