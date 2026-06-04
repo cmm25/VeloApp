@@ -1526,6 +1526,13 @@ export const bountyExtensionAbi = [
     outputs: [{ name: "", type: "bytes32" }],
   },
   {
+    type: "function",
+    name: "athleteSbt",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+  {
     type: "event",
     name: "BountyPosted",
     inputs: [
