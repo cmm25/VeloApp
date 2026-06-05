@@ -8,8 +8,7 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
-    "precheck": "tsx src/utils/precheck.ts",
-    "verify:technique": "tsx scripts/verify-technique-reference.ts"
+    "precheck": "tsx src/utils/precheck.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
