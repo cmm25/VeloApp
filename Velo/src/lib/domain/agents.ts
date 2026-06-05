@@ -172,12 +172,17 @@ export function useAgentActivity(address?: Address) {
  */
 const SKILL_NAMES: Record<string, string> = {
   "vision.pose": "Pose & Form Vision",
+  "vision.serve": "Serve Vision Model",
   "coaching.tactics": "Coaching Tactics",
   "coaching.drills": "Coaching Drills",
   "velo.v1": "Velo v1",
 };
 
 const KNOWN_SKILLS: Record<string, string> = {};
+
+// Skill hashes that identify a video-analysis ("vision.*") model. These are the
+// only skills a coach can pick from when choosing which model analyzes a job.
+const VISION_SKILLS = new Set<string>();
 
 /** Register a readable label for a skill given its on-chain bytes32 hash. */
 export function registerSkillLabel(skill: Hex, label: string) {
@@ -191,11 +196,19 @@ export function registerSkillName(name: string, label = name) {
 
 for (const [name, label] of Object.entries(SKILL_NAMES)) {
   registerSkillName(name, label);
+  if (name.startsWith("vision.")) {
+    VISION_SKILLS.add(keccak256(toBytes(name)).toLowerCase());
+  }
 }
 
 /** True when the skill hash maps to a known, human-readable label. */
 export function isKnownSkill(skill: Hex): boolean {
   return skill.toLowerCase() in KNOWN_SKILLS;
+}
+
+/** True when the skill is a video-analysis ("vision.*") model skill. */
+export function isVisionSkill(skill: Hex): boolean {
+  return VISION_SKILLS.has(skill.toLowerCase());
 }
 
 export function skillLabel(skill: Hex): string {

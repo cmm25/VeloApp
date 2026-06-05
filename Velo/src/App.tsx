@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import { lazy, Suspense } from "react";
 import { queryClient } from "@/lib/queryClient";
 import { Web3Provider } from "@/components/Web3Provider";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { RequireRole, RequireWallet } from "@/components/RoleGate";
 import { FullPageLoader } from "@/components/ui/spinner";
 
@@ -96,12 +97,14 @@ function Router() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Web3Provider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster theme="dark" position="bottom-right" richColors />
-      </Web3Provider>
+      <ErrorBoundary>
+        <Web3Provider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
+          <Toaster theme="dark" position="bottom-right" richColors />
+        </Web3Provider>
+      </ErrorBoundary>
     </QueryClientProvider>
   );
 }

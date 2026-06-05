@@ -11,11 +11,13 @@ import {
   getFormAgentWallet,
   fetchNonce,
   submitFormReceiptTx,
+  formHandlesSkill,
 } from "../chain/contracts.js";
 import {
   buildFormReceipt,
   signReceipt,
 } from "../chain/eip712.js";
+import { decodeJobSpec } from "../chain/job-spec.js";
 import { upsertReceipt } from "../api/store.js";
 import type { JobEvent } from "../chain/abi.js";
 
@@ -34,7 +36,20 @@ const log = makeLogger("form-agent");
  *   7. Store in receipt store for API server
  */
 export async function handleJobRequested(event: JobEvent): Promise<void> {
-  const { jobId, athlete, videoCid, deadline } = event;
+  const { jobId, athlete, videoCid: rawVideoCid, deadline } = event;
+
+  // Decode the coach's model selection (off-chain routing). A default/legacy job
+  // (no skill, raw cid) is handled here; a job explicitly routed to a different
+  // model is ignored so that agent can pick it up instead.
+  const { skill: jobSkill, videoCid } = decodeJobSpec(rawVideoCid);
+  if (!formHandlesSkill(jobSkill)) {
+    log.info("Job routed to a different model — Form agent skipping", {
+      jobId,
+      jobSkill,
+    });
+    return;
+  }
+
   log.info("Handling JobRequested", { jobId, athlete, videoCid });
 
   const wallet = getFormAgentWallet();

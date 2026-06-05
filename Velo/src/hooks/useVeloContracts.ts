@@ -12,6 +12,7 @@ import { getRecentLogs } from "@/lib/web3/logs";
 import { veloOrchestratorAbi, athleteSbtAbi } from "@/lib/web3/abis";
 import { deployment } from "@/lib/web3/deployment";
 import { somniaTestnet } from "@/lib/web3/chain";
+import { decodeJobSpec } from "@/lib/domain/jobSpec";
 
 export type JobStatus =
   | "None"
@@ -110,7 +111,9 @@ function decodeJob(jobId: Hex, raw: unknown): Job | null {
     jobId,
     coach: j.coach,
     athlete: j.athlete,
-    videoCid: j.videoCid,
+    // The on-chain videoCid may carry an off-chain model-routing prefix (see
+    // jobSpec). Strip it here so every consumer transparently sees the raw cid.
+    videoCid: decodeJobSpec(j.videoCid).videoCid,
     fee: j.fee,
     createdAt: j.createdAt,
     deadline: j.deadline,

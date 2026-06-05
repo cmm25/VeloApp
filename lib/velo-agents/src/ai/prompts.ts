@@ -1,5 +1,6 @@
 import type { TennisTelemetry } from "./schemas.js";
 import type { FormReport } from "./schemas.js";
+import type { ExternalModelOutput } from "./schemas.js";
 
 export function buildFormAnalysisPrompt(telemetry: TennisTelemetry): string {
   const phases = telemetry.strokePhases
@@ -63,6 +64,80 @@ Rules:
 - Maximum 3 strengths
 - overallScore: 8-10 = excellent, 6-7 = good, 4-5 = needs work, 0-3 = significant issues
 - Be specific and measurable — reference actual angle values from the data
+- keyFindings must be usable by a coach reading it on their phone
+
+Respond with ONLY the JSON object, no markdown, no explanation.`;
+}
+
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ *  ⚠  THE SINGLE SPECIALIZATION POINT for the external analysis model.
+ * ════════════════════════════════════════════════════════════════════════════
+ * Everything else about the second model agent is generic and already wired:
+ * the HTTP client (external-model.ts), the on-chain registration, the routing,
+ * the Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
+ *
+ * The model is still in training, so this prompt and `ExternalModelOutputSchema`
+ * (schemas.ts) are deliberately GENERIC PLACEHOLDERS. They translate whatever the
+ * model reports (aspect + metrics + observations) into the standard FormReport.
+ *
+ * WHEN THE REAL MODEL IS READY, finalize the integration in exactly three places:
+ *   1. `ExternalModelOutputSchema` (schemas.ts) — tighten to the real output shape.
+ *   2. This function — tailor the translation to the model's actual aspect/metrics.
+ *   3. The skill name + label — `EXTERNAL_MODEL_SKILL` / `EXTERNAL_MODEL_NAME`
+ *      (config) and the matching entry in the frontend's SKILL_NAMES catalog
+ *      (Velo/src/lib/domain/agents.ts) so the picker shows a friendly name.
+ * Until then, leave this as-is: it produces a valid report from generic input.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+export function buildExternalModelPrompt(output: ExternalModelOutput): string {
+  const metrics = Object.entries(output.metrics)
+    .map(([k, v]) => `  ${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
+    .join("\n");
+
+  const observations = output.observations.map((o) => `  - ${o}`).join("\n");
+
+  return `You are a professional tennis biomechanics analyst. An independently-trained, aspect-specific vision model has analysed a tennis clip and emitted the structured measurements below. Translate its raw output into a coaching form analysis report.
+
+MODEL OUTPUT:
+- Aspect analysed: ${output.aspect}
+${output.confidence != null ? `- Model confidence: ${(output.confidence * 100).toFixed(0)}%` : ""}
+
+Metrics:
+${metrics || "  (none provided)"}
+
+Observations:
+${observations || "  (none provided)"}
+
+${output.notes ? `Model notes: ${output.notes}` : ""}
+
+TASK:
+Return a JSON object matching this schema exactly:
+{
+  "strokeType": "forehand" | "backhand" | "serve" | "volley" | "unknown",
+  "overallScore": <number 0-10>,
+  "issues": [
+    {
+      "area": "shoulder" | "elbow" | "wrist" | "hip" | "knee" | "footwork" | "balance" | "timing" | "symmetry",
+      "severity": "critical" | "moderate" | "minor",
+      "phase": "preparation" | "contact" | "follow_through" | "overall",
+      "observation": "<what is wrong, max 300 chars>",
+      "recommendation": "<what to fix, max 300 chars>"
+    }
+  ],
+  "strengths": [
+    { "area": "<area>", "observation": "<what is good, max 200 chars>" }
+  ],
+  "keyFindings": "<2-3 sentence clinical summary of the most important findings, max 500 chars>",
+  "analysedAt": "${new Date().toISOString()}"
+}
+
+Rules:
+- Base every judgement ONLY on the model output above — do not invent measurements it did not provide
+- Maximum 5 issues, ordered by severity (critical first)
+- Maximum 3 strengths
+- overallScore: 8-10 = excellent, 6-7 = good, 4-5 = needs work, 0-3 = significant issues
+- Map the model's aspect to the closest strokeType (use "unknown" if unclear)
 - keyFindings must be usable by a coach reading it on their phone
 
 Respond with ONLY the JSON object, no markdown, no explanation.`;
