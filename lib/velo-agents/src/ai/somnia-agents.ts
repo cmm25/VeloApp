@@ -124,43 +124,17 @@ export function nativeAgentsConfigured(): boolean {
 }
 
 /**
- * Pure gating predicate for the parse-website path — kept separate from the
- * config singleton so it is deterministically testable. Mirrors the native
- * gating but keyed on the parse-website agent id.
- */
-export function isParseWebsiteConfigured(c: {
-  enabled: boolean;
-  contract?: string;
-  relayAddress?: string;
-  parseWebsiteAgentId?: string;
-}): boolean {
-  return (
-    c.enabled &&
-    !!c.contract &&
-    !!c.relayAddress &&
-    !!c.parseWebsiteAgentId &&
-    c.parseWebsiteAgentId !== "0"
-  );
-}
-
-/**
- * True when the LLM Parse Website path is configured. Keyed on the parse-website
- * agent id, so the verified-technique reference stays inert until explicitly
- * enabled (opt-in exactly like SOMNIA_LLM_AGENT_ID).
+ * True when the LLM Parse Website path is configured. Mirrors
+ * `nativeAgentsConfigured` but keyed on the parse-website agent id, so the
+ * verified-technique reference stays inert until explicitly enabled.
  */
 export function parseWebsiteConfigured(): boolean {
-  return isParseWebsiteConfigured(config.somniaAgents);
-}
-
-/**
- * Encode the LLM Parse Website `ExtractString` call. Pure (no chain/network) so
- * the wiring — argument order and `resolveUrl=false` (scrape the explicit source
- * URL directly), numPages=1, confidenceThreshold=60 — is independently testable.
- */
-export function encodeParseWebsitePayload(prompt: string, url: string): string {
-  return new ethers.Interface([...PARSE_WEBSITE_AGENT_ABI]).encodeFunctionData(
-    "ExtractString",
-    ["tip", "A concise, actionable tennis coaching tip", [], prompt, url, false, 1, 60]
+  return (
+    config.somniaAgents.enabled &&
+    !!config.somniaAgents.contract &&
+    !!config.somniaAgents.relayAddress &&
+    !!config.somniaAgents.parseWebsiteAgentId &&
+    config.somniaAgents.parseWebsiteAgentId !== "0"
   );
 }
 
@@ -247,7 +221,12 @@ export async function runParseWebsite(
       "Somnia parse-website agent not configured (set SOMNIA_AGENT_RELAY_ADDRESS and SOMNIA_PARSE_WEBSITE_AGENT_ID)"
     );
   }
-  const payload = encodeParseWebsitePayload(prompt, url);
+  // resolveUrl=false scrapes the explicit source URL directly (skips the search
+  // layer); numPages=1; confidenceThreshold=60.
+  const payload = new ethers.Interface([...PARSE_WEBSITE_AGENT_ABI]).encodeFunctionData(
+    "ExtractString",
+    ["tip", "A concise, actionable tennis coaching tip", [], prompt, url, false, 1, 60]
+  );
   return dispatchRequest(config.somniaAgents.parseWebsiteAgentId, payload, signer, "string");
 }
 
