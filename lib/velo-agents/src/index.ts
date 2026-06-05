@@ -4,6 +4,7 @@ import { validateRequiredForAgents, config } from "./utils/config.js";
 import { startServer } from "./api/server.js";
 import { startWatcher } from "./chain/watcher.js";
 import { handleJobRequested } from "./agents/form-agent.js";
+import { handleExternalJobRequested } from "./agents/external-model-agent.js";
 import { handleFormReceiptSubmitted } from "./agents/prescriber-agent.js";
 import { handleBountyAccepted } from "./agents/bounty-agent.js";
 import { registerAgentsOnChain } from "./chain/contracts.js";
@@ -42,11 +43,22 @@ async function main() {
 
   const stopWatcher = await startWatcher({
     onJobRequested: async (event) => {
-      log.info("► Job received — starting Form Agent", { jobId: event.jobId });
+      log.info("► Job received — dispatching to selectable agents", { jobId: event.jobId });
+      // Every registered analysis agent sees the job and self-filters by the
+      // coach's selected skill (encoded in the videoCid). Run them independently
+      // so one agent's failure never blocks another.
       try {
         await handleJobRequested(event);
       } catch (err) {
         log.error("Form Agent failed for job", {
+          jobId: event.jobId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      try {
+        await handleExternalJobRequested(event);
+      } catch (err) {
+        log.error("External Model Agent failed for job", {
           jobId: event.jobId,
           error: err instanceof Error ? err.message : String(err),
         });

@@ -46,6 +46,15 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
           if (
+            id.includes("@reown") ||
+            id.includes("@walletconnect") ||
+            id.includes("@wagmi") ||
+            id.includes("/wagmi") ||
+            id.includes("/viem")
+          ) {
+            return "web3-vendor";
+          }
+          if (
             id.includes("framer-motion") ||
             id.includes("motion-dom") ||
             id.includes("motion-utils")
@@ -61,7 +70,7 @@ export default defineConfig({
 
   server: {
     host: "0.0.0.0",
-    port: 5173,
+    port: 5000,
     // Replit serves the preview through a proxied iframe on a different host.
     allowedHosts: true,
     fs: {

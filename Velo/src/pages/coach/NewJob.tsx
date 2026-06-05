@@ -17,7 +17,8 @@ import {
   useMinBountyFee,
   parseSttToWei,
 } from "@/lib/domain/bounties";
-import { useRegisteredAgents, skillLabel } from "@/lib/domain/agents";
+import { useRegisteredAgents, skillLabel, isVisionSkill } from "@/lib/domain/agents";
+import { encodeJobSpec, skillHashOf } from "@/lib/domain/jobSpec";
 import { useAthleteDirectory, type Athlete } from "@/lib/domain/athletes";
 import {
   useTapes,
@@ -58,6 +59,11 @@ type SuccessState = {
 
 const DEADLINE_HOURS = 24;
 
+// Default analysis model for direct jobs. Picking this passes the raw videoCid
+// through unchanged (no off-chain routing prefix), so legacy/default jobs are
+// byte-for-byte identical and the Form agent picks them up as before.
+const DEFAULT_MODEL_SKILL = skillHashOf("vision.pose");
+
 export default function NewJob() {
   const [, setLocation] = useLocation();
   const searchParams = useSearch();
@@ -90,6 +96,10 @@ export default function NewJob() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [success, setSuccess] = useState<SuccessState | null>(null);
 
+  // Direct-mode analysis model selection. Defaults to the pose/Form model, which
+  // sends the raw cid unchanged (see DEFAULT_MODEL_SKILL).
+  const [selectedModel, setSelectedModel] = useState<Hex>(DEFAULT_MODEL_SKILL);
+
   // Bounty mode
   const [mode, setMode] = useState<"direct" | "bounty">("bounty");
   const [bountyBudget, setBountyBudget] = useState<string>("");
@@ -103,6 +113,19 @@ export default function NewJob() {
     const set = new Set<string>();
     registeredAgents.forEach((a) =>
       a.skills.forEach((s) => set.add(s.toLowerCase())),
+    );
+    return Array.from(set) as Hex[];
+  }, [registeredAgents]);
+
+  // Vision models a coach can route a DIRECT job to. Always includes the default
+  // pose model; any other registered "vision.*" agent skill is added so newly
+  // deployed analysis models appear automatically.
+  const visionModels = useMemo(() => {
+    const set = new Set<string>([DEFAULT_MODEL_SKILL.toLowerCase()]);
+    registeredAgents.forEach((a) =>
+      a.skills.forEach((s) => {
+        if (isVisionSkill(s)) set.add(s.toLowerCase());
+      }),
     );
     return Array.from(set) as Hex[];
   }, [registeredAgents]);
@@ -341,12 +364,19 @@ export default function NewJob() {
     setIsSubmitting(true);
     try {
       const deadline = BigInt(Math.floor(Date.now() / 1000) + DEADLINE_HOURS * 3600);
+      // Off-chain model routing: the default (pose) model sends the raw cid; any
+      // other selected vision model encodes its skill into the videoCid so the
+      // matching agent self-selects the job. recordRecentJob keeps the RAW cid.
+      const cidToSend =
+        selectedModel.toLowerCase() === DEFAULT_MODEL_SKILL.toLowerCase()
+          ? pickedCid
+          : encodeJobSpec(selectedModel, pickedCid);
       const t0 = performance.now();
       const txHash = await writeContractAsync({
         address: orch,
         abi: veloOrchestratorAbi,
         functionName: "payJob",
-        args: [selected.address, pickedCid, deadline],
+        args: [selected.address, cidToSend, deadline],
         value: valueWei,
       });
 
@@ -755,6 +785,33 @@ export default function NewJob() {
             {step === 3 && mode === "direct" && (
               <div className="max-w-md space-y-6">
                 <div className="bg-card/30 border border-border/50 p-6 rounded-sm space-y-5">
+                  {visionModels.length > 1 && (
+                    <div>
+                      <label className="block text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">
+                        Analysis model
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {visionModels.map((s) => {
+                          const active =
+                            selectedModel.toLowerCase() === s.toLowerCase();
+                          return (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => setSelectedModel(s)}
+                              className={`text-[10px] uppercase tracking-widest font-bold px-2.5 py-1 rounded-sm border transition-colors ${
+                                active
+                                  ? "bg-amber text-ink border-amber"
+                                  : "text-muted-foreground border-border/60 hover:border-amber/40 hover:text-amber"
+                              }`}
+                            >
+                              {skillLabel(s)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                   <div>
                     <label className="block text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">
                       Analysis fee (STT) — min {minFee ? formatStt(minFee) : "—"}
