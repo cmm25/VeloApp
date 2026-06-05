@@ -64,6 +64,14 @@ const JSON_API_AGENT_ABI = [
   "function request(string url, string jsonPath) returns (string)",
 ] as const;
 
+// LLM Parse Website agent — `ExtractString(key, description, options, prompt,
+// url, resolveUrl, numPages, confidenceThreshold)` scrapes a real URL and
+// returns one extracted string. Verified against the agent explorer + docs
+// (id 12875401142070969085, docs.somnia.network/agents/base-agents/llm-parse-website).
+const PARSE_WEBSITE_AGENT_ABI = [
+  "function ExtractString(string key, string description, string[] options, string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold) returns (string output)",
+] as const;
+
 // Mirrors ISomniaAgents.ResponseStatus
 enum ResponseStatus {
   None = 0,
@@ -112,6 +120,47 @@ export function nativeAgentsConfigured(): boolean {
     !!config.somniaAgents.relayAddress &&
     !!config.somniaAgents.llmAgentId &&
     config.somniaAgents.llmAgentId !== "0"
+  );
+}
+
+/**
+ * Pure gating predicate for the parse-website path — kept separate from the
+ * config singleton so it is deterministically testable. Mirrors the native
+ * gating but keyed on the parse-website agent id.
+ */
+export function isParseWebsiteConfigured(c: {
+  enabled: boolean;
+  contract?: string;
+  relayAddress?: string;
+  parseWebsiteAgentId?: string;
+}): boolean {
+  return (
+    c.enabled &&
+    !!c.contract &&
+    !!c.relayAddress &&
+    !!c.parseWebsiteAgentId &&
+    c.parseWebsiteAgentId !== "0"
+  );
+}
+
+/**
+ * True when the LLM Parse Website path is configured. Keyed on the parse-website
+ * agent id, so the verified-technique reference stays inert until explicitly
+ * enabled (opt-in exactly like SOMNIA_LLM_AGENT_ID).
+ */
+export function parseWebsiteConfigured(): boolean {
+  return isParseWebsiteConfigured(config.somniaAgents);
+}
+
+/**
+ * Encode the LLM Parse Website `ExtractString` call. Pure (no chain/network) so
+ * the wiring — argument order and `resolveUrl=false` (scrape the explicit source
+ * URL directly), numPages=1, confidenceThreshold=60 — is independently testable.
+ */
+export function encodeParseWebsitePayload(prompt: string, url: string): string {
+  return new ethers.Interface([...PARSE_WEBSITE_AGENT_ABI]).encodeFunctionData(
+    "ExtractString",
+    ["tip", "A concise, actionable tennis coaching tip", [], prompt, url, false, 1, 60]
   );
 }
 
@@ -180,6 +229,26 @@ export async function runJsonApiRequest(
     [url, jsonPath]
   );
   return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string");
+}
+
+/**
+ * Run an LLM Parse Website request through Somnia's native agent (via the relay).
+ * Scrapes the given real source URL and extracts a single coaching tip, returning
+ * the consensus output plus its auditable receipt. Throws `SomniaAgentsUnavailable`
+ * on any timeout / unavailability so callers can skip the reference cleanly.
+ */
+export async function runParseWebsite(
+  prompt: string,
+  url: string,
+  signer: ethers.Wallet
+): Promise<SomniaAgentResult> {
+  if (!parseWebsiteConfigured()) {
+    throw new SomniaAgentsUnavailable(
+      "Somnia parse-website agent not configured (set SOMNIA_AGENT_RELAY_ADDRESS and SOMNIA_PARSE_WEBSITE_AGENT_ID)"
+    );
+  }
+  const payload = encodeParseWebsitePayload(prompt, url);
+  return dispatchRequest(config.somniaAgents.parseWebsiteAgentId, payload, signer, "string");
 }
 
 // Core request lifecycle
