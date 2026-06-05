@@ -21,6 +21,7 @@ import {
   Database,
   Cpu,
   Zap,
+  BookOpen,
 } from "lucide-react";
 import { AgentStatusBadge } from "@/components/AgentStatusBadge";
 import { orchestratorAddress } from "@/hooks/useVeloContracts";
@@ -39,7 +40,12 @@ import {
   type ReceiptStruct,
 } from "@/lib/web3/eip712";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
-import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
+import {
+  useIpfsJson,
+  somniaReceiptUrlFromJson,
+  techniqueReferenceFromJson,
+  type TechniqueReferenceView,
+} from "@/lib/web3/ipfs";
 import { type IndexedEntry, type AiProvenance } from "@/lib/web3/indexer";
 import { somniaTestnet } from "@/lib/web3/chain";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
@@ -286,6 +292,7 @@ export function ReceiptStage({
   const verifiedOk = verifyState.phase === "verified" && verifyState.ok;
   const ipfs = ipfsQuery.data ?? null;
   const ipfsSomniaReceiptUrl = somniaReceiptUrlFromJson(ipfs);
+  const techniqueRef = kind === "rx" ? techniqueReferenceFromJson(ipfs) : null;
   const nativeReceiptUrl =
     indexedEntry?.provenance?.path === "native"
       ? indexedEntry.provenance.somnia?.receiptUrl
@@ -354,6 +361,8 @@ export function ReceiptStage({
               />
             )}
 
+            <TechniqueReferencePanel reference={techniqueRef} />
+
             <SomniaProvenancePanel provenance={indexedEntry?.provenance ?? null} />
 
             <ReceiptIntegrityPanel
@@ -367,6 +376,65 @@ export function ReceiptStage({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Verified technique reference
+
+/**
+ * Shows the real coaching source the Prescriber grounded this plan in — fetched
+ * and consensus-verified on Somnia's Agentic L1 by the LLM Parse Website agent.
+ * Renders nothing unless a reference is present (graceful fallback).
+ */
+function TechniqueReferencePanel({
+  reference,
+}: {
+  reference: TechniqueReferenceView | null;
+}) {
+  if (!reference) return null;
+  let host: string | null = null;
+  if (reference.sourceUrl) {
+    try {
+      host = new URL(reference.sourceUrl).hostname.replace(/^www\./, "");
+    } catch {
+      host = null;
+    }
+  }
+  return (
+    <div className="mt-4 rounded-sm border border-amber/30 bg-amber/[0.04] p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <BookOpen className="w-4 h-4 text-amber" />
+        <span className="text-[10px] uppercase tracking-widest font-bold text-chalk/80">
+          Verified Technique Reference
+        </span>
+      </div>
+      <p className="text-sm text-chalk/90 leading-relaxed mb-3">{reference.tip}</p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        {reference.sourceUrl && (
+          <a
+            href={reference.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+          >
+            {host ? `Source · ${host}` : "Source"} <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+        {reference.receiptUrl && (
+          <a
+            href={reference.receiptUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+          >
+            View consensus receipt <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+      </div>
+      <p className="mt-2 text-[10px] text-muted-foreground leading-relaxed">
+        Sourced &amp; consensus-verified on Somnia's Agentic L1 by the LLM Parse Website agent.
+      </p>
     </div>
   );
 }
