@@ -110,6 +110,16 @@ export const SomniaAgentReceiptSchema = z.object({
   receiptUrl: z.string(),
 });
 
+// A real coaching tip extracted from a verified source by Somnia's LLM Parse
+// Website agent, with the consensus receipt that backs it.
+export const TechniqueReferenceSchema = z.object({
+  tip: z.string(),
+  sourceUrl: z.string(),
+  somnia: SomniaAgentReceiptSchema.optional(),
+});
+
+export type TechniqueReference = z.infer<typeof TechniqueReferenceSchema>;
+
 export const AiProvenanceSchema = z.object({
   path: z.enum(["native", "fallback"]),
   agentType: z.literal("llm-inference"),
@@ -158,6 +168,7 @@ export const StoredReceiptSchema = z.object({
     blockNumber: z.string(),
     report: PrescriptionReportSchema.optional(),
     provenance: AiProvenanceSchema.optional(),
+    techniqueReference: TechniqueReferenceSchema.optional(),
   }).nullable(),
 });
 
