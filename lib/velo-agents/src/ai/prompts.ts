@@ -68,6 +68,18 @@ Rules:
 Respond with ONLY the JSON object, no markdown, no explanation.`;
 }
 
+/**
+ * Builds the extraction prompt for the LLM Parse Website agent — a search for one
+ * real coaching tip targeting the diagnosed stroke fault.
+ */
+export function buildTechniqueQueryPrompt(formReport: FormReport): string {
+  const primary = formReport.issues[0];
+  const focus = primary
+    ? `the ${formReport.strokeType} ${primary.area} during ${primary.phase} (${primary.observation})`
+    : `the ${formReport.strokeType}`;
+  return `Find one concise, actionable coaching tip to improve ${focus} in tennis. Respond with a single practical sentence an athlete can apply.`;
+}
+
 export function buildPrescriptionPrompt(
   formReport: FormReport,
   athleteContext?: string

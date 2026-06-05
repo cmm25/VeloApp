@@ -34,6 +34,36 @@ export function summaryFromReport(json: unknown): string | null {
   return null;
 }
 
+export type TechniqueReferenceView = {
+  tip: string;
+  sourceUrl: string | null;
+  receiptUrl: string | null;
+};
+
+/** Best-effort extraction of the verified technique reference from receipt JSON. */
+export function techniqueReferenceFromJson(json: unknown): TechniqueReferenceView | null {
+  if (!json || typeof json !== "object") return null;
+  const j = json as Record<string, unknown>;
+  const ref =
+    j["techniqueReference"] && typeof j["techniqueReference"] === "object"
+      ? (j["techniqueReference"] as Record<string, unknown>)
+      : null;
+  if (!ref) return null;
+  const tip = typeof ref["tip"] === "string" ? ref["tip"].trim() : "";
+  if (!tip) return null;
+  const sourceUrl =
+    typeof ref["sourceUrl"] === "string" && ref["sourceUrl"].startsWith("http")
+      ? ref["sourceUrl"]
+      : null;
+  const somnia =
+    ref["somnia"] && typeof ref["somnia"] === "object"
+      ? (ref["somnia"] as Record<string, unknown>)
+      : null;
+  const url = somnia?.["receiptUrl"];
+  const receiptUrl = typeof url === "string" && url.startsWith("http") ? url : null;
+  return { tip, sourceUrl, receiptUrl };
+}
+
 /** Best-effort extraction of Somnia consensus receipt URL from receipt JSON. */
 export function somniaReceiptUrlFromJson(json: unknown): string | null {
   if (!json || typeof json !== "object") return null;
