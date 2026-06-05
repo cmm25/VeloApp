@@ -73,6 +73,32 @@ export const FormReportSchema = z.object({
 
 export type FormReport = z.infer<typeof FormReportSchema>;
 
+// External model output (raw JSON returned by an independently-trained model
+// hosted on RunPod / Render). The model is still in training, so this schema is
+// deliberately generic: it validates the SHAPE of any tennis-aspect model's
+// output (e.g. a serve-specific model) without prescribing the exact metrics.
+// The external-model agent feeds this into an LLM to produce a standard
+// FormReport, so the downstream Prescriber + UI consume it unchanged.
+//
+// ⚠ SPECIALIZATION POINT (1 of 3): when the real model's output is finalized,
+// tighten this schema to its exact shape. See buildExternalModelPrompt() in
+// prompts.ts for the full three-place checklist.
+
+export const ExternalModelOutputSchema = z.object({
+  // Which tennis aspect this model analysed (e.g. "serve", "rally", "footwork").
+  aspect: z.string().min(1).max(64),
+  // Named numeric measurements the model produced (keys are model-specific).
+  metrics: z.record(z.string(), z.number()).default({}),
+  // Free-text observations the model emitted about the clip.
+  observations: z.array(z.string().max(500)).max(20).default([]),
+  // Optional 0-1 confidence the model attaches to its analysis.
+  confidence: z.number().min(0).max(1).nullish(),
+  // Optional human-readable summary from the model itself.
+  notes: z.string().max(1000).nullish(),
+});
+
+export type ExternalModelOutput = z.infer<typeof ExternalModelOutputSchema>;
+
 // Prescription Report (output of PrescriberAgent AI)
 
 export const DrillSchema = z.object({

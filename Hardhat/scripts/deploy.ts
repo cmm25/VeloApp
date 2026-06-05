@@ -252,6 +252,11 @@ async function main() {
   const operatorAddrs = [
     deriveAddr(process.env.AGENT_FORM_PRIVATE_KEY),
     deriveAddr(process.env.AGENT_PRESCRIBER_PRIVATE_KEY),
+    // External analysis model agent — only present once its dedicated key is set.
+    // Granting it OPERATOR_ROLE lets it reason through the SAME native Qwen relay
+    // as Form/Prescriber (with automatic Groq fallback) instead of being forced
+    // straight to fallback.
+    deriveAddr(process.env.AGENT_EXTERNAL_PRIVATE_KEY),
   ].filter((a): a is string => Boolean(a));
 
   let relayAddr = contracts.somniaAgentRelay && (await hasBytecode(contracts.somniaAgentRelay))

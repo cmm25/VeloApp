@@ -14,6 +14,12 @@ When a coach pays for an athlete's video to be analysed, an event is emitted on-
 
 **Bounty Agent** — same idea but triggered by the open bounty marketplace. When a bounty is accepted on-chain, this agent processes the submitted video and settles the bounty.
 
+**External Model Agent** — an optional, swappable second analysis model the coach can choose from when creating a direct job. It listens for the same `JobRequested` events as the Form Agent and self-selects only the jobs the coach explicitly routed to it, then submits a standard form receipt so the Prescriber and the UI consume its output unchanged.
+
+> **Activation.** This agent is completely inert until you set both `EXTERNAL_MODEL_URL` and `AGENT_EXTERNAL_PRIVATE_KEY` (see `.env.example`). Until then it registers nothing on-chain and the coach's "Analysis model" picker shows only the default pose model, so the existing pipeline is byte-for-byte unchanged.
+>
+> **How routing works (off-chain tradeoff).** `payJob` has no on-chain field for the chosen model, and we deliberately avoid a contract change. When the coach picks a non-default model, the selected skill is encoded into the opaque `videoCid` string (`velo+skill:<0xskillHash>;<rawCid>`); each agent decodes it and self-filters by skill. The default selection sends the raw cid unchanged. The cid is decoded back to the raw value on every read, so the model choice is **not** independently auditable on-chain the way a dedicated contract field would be — it is inferred from the cid encoding. Bounties are unaffected: they still route by on-chain `requiredSkills`.
+
 ---
 
 ## AI paths
