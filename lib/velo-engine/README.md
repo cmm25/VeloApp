@@ -1,78 +1,98 @@
 # velo-engine
 
-The video analysis sidecar for Velo. It receives a tennis video URL from the agent runner, watches the player move frame-by-frame, and sends back a structured breakdown of their technique — joint angles, stroke phases, symmetry, and the dominant stroke type. The agent runner's Form Agent uses that data to write its AI coaching report.
+Video analysis sidecar for Velo. Receives a tennis video URL, runs pose estimation frame by frame, and returns structured biomechanical telemetry that the Form Analyst agent turns into a coaching report.
 
-This service is **optional**. If you set `VISION_MODE=mock` on the agent runner, it generates synthetic telemetry instead and the engine is never called. That is enough to run the full on-chain flow during development.
+In production, the Form Analyst calls this service on every job before generating its coaching report.
 
 ---
 
-## What it does
+## What this folder contains
 
-When a job comes in, the engine:
+| Area | Location | Purpose |
+|------|----------|---------|
+| **HTTP server** | `src/main.py` | FastAPI app — `/analyze` and `/healthz` endpoints |
+| **Analysis pipeline** | `src/analyze.py` | Video download, frame sampling, orchestration |
+| **Backends** | `src/analyzer_mediapipe.py`, `src/analyzer_custom.py` | Pluggable pose estimation implementations |
+| **Base class** | `src/analyzer_base.py` | Shared interface all backends implement |
+| **Factory** | `src/factory.py` | Selects backend from `ANALYZER_BACKEND` env var |
+| **Data models** | `src/models.py` | Request and `TennisTelemetry` response shapes |
+| **Custom models** | `custom_models/` | Drop zone for your own model weights |
 
-1. Downloads the video from the IPFS gateway URL (or any direct URL) into a temporary file.
-2. Samples every Nth frame (configurable, default every 3rd frame).
-3. Runs pose estimation on each sampled frame to locate the player's body landmarks.
-4. Calculates five joint angles that matter most for tennis: shoulder lift, elbow extension, wrist cock/snap, hip rotation, and knee drive.
-5. Classifies each frame into a stroke phase: preparation, contact, or follow-through.
-6. Determines the dominant stroke (forehand, backhand, serve, or volley) from the overall angle pattern.
-7. Counts individual stroke cycles.
-8. Computes a symmetry score — how consistent the technique is across the clip (0 = highly variable, 1 = very consistent).
-9. Returns everything as a single JSON response that the Form Agent converts into coaching language.
+---
+
+## What it produces
+
+```mermaid
+flowchart LR
+  Video["Video URL"]
+  Download["Download & sample frames"]
+  Pose["Pose estimation"]
+  Angles["Joint angles"]
+  Phases["Stroke phases"]
+  Output["TennisTelemetry JSON"]
+
+  Video --> Download --> Pose --> Angles --> Phases --> Output
+```
+
+For each video, the engine:
+
+1. Downloads from an IPFS gateway or direct URL
+2. Samples every Nth frame (configurable)
+3. Locates body landmarks via the active backend
+4. Calculates five joint angles — shoulder, elbow, wrist, hip, knee
+5. Classifies stroke phases — preparation, contact, follow-through
+6. Determines dominant stroke type and stroke count
+7. Computes a symmetry score (0 = inconsistent, 1 = very consistent)
+
+The response is a single `TennisTelemetry` JSON object consumed by the Form Analyst in `velo-agents`.
 
 ---
 
 ## Analysis backends
 
-The engine is designed to support more than one pose estimation model. You choose which one runs by setting an environment variable — no code change needed.
+| Backend | Env value | Notes |
+|---------|-----------|-------|
+| **MediaPipe** | `mediapipe` (default) | Google's open-source pose model — no extra weights required |
+| **Custom** | `custom` | Load your own model from `custom_models/` — implement the two methods in `analyzer_custom.py` |
 
-### MediaPipe (default)
-
-Google's open-source pose landmark model. Works out of the box with no model file to download or host. Good accuracy for a hackathon or early production deployment. Selected when `ANALYZER_BACKEND=mediapipe` (or when the variable is not set).
-
-### Custom model
-
-For when you have trained your own pose estimation model — for example, one fine-tuned specifically on tennis players, or one that works better on low-quality phone footage.
-
-To plug in your own model:
-
-1. Place your weights file inside `lib/velo-engine/custom_models/`. Any format works as long as you load it in Python (ONNX, TFLite, PyTorch `.pt`, etc.).
-2. Set `ANALYZER_BACKEND=custom` and `CUSTOM_MODEL_PATH=custom_models/your_file` in your environment.
-3. Open `src/analyzer_custom.py` and implement the two methods described in its comments: one that loads the weights, and one that runs the analysis loop.
-4. Rebuild and redeploy.
-
-The custom model must output the same five joint angles as MediaPipe. All the downstream logic (symmetry scoring, stroke counting, phase classification) is model-agnostic and can be reused as-is. The file `src/analyzer_custom.py` contains a detailed implementation guide and explains exactly what each angle represents.
+Switching backends requires only an environment variable change and a redeploy. Downstream logic (symmetry, stroke counting, phase classification) is backend-agnostic.
 
 ---
 
-## Data types
+## Endpoints
 
-The response from `/analyze` is a `TennisTelemetry` object. The key fields are:
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/analyze` | POST | Accepts a video URL, returns `TennisTelemetry` |
+| `/healthz` | GET | Liveness check for Docker and the agent runner startup precheck |
 
-- **peak_angles / avg_angles** — the five joint angles at their peak and averaged across the clip
-- **stroke_phases** — a representative snapshot for each phase (preparation, contact, follow-through) with the angles and timestamp at that moment
-- **symmetry_score** — a number from 0 to 1
-- **dominant_stroke** — forehand, backhand, serve, or volley
-- **stroke_count** — estimated number of strokes in the clip
-- **duration_ms / frames_analyzed / fps** — metadata about the video that was processed
-- **is_mock** — always `false` from this service; `true` only when the agent runner generates synthetic telemetry
+Configurable options (port, max duration, model complexity, sample rate) are in `.env.example`.
 
 ---
 
-## Running locally
+## Deployment
 
-Copy the example env file and install dependencies, then start the server.
+Ships with a `Dockerfile` that reads the platform-injected `PORT` variable. Works on Render, Koyeb, and similar hosts without changes. Defined alongside `velo-agents` in the root `render.yaml`.
 
-The service reads `PORT` from the environment (defaults to 8000). To run a quick analysis check, POST a JSON body with a `video_url` field to `/analyze`.
-
-See `.env.example` for all configurable options.
+For production on modest hardware, the defaults balance speed and accuracy. Increase `MAX_VIDEO_DURATION_S` or `MEDIAPIPE_MODEL_COMPLEXITY` when you have more compute available.
 
 ---
 
-## Deploying
+## How this connects to the rest of Velo
 
-The service ships a `Dockerfile` that reads the platform-injected `PORT` variable, so it works on Render and Koyeb free tiers with no changes. It also has a built-in `/healthz` endpoint used by the Docker health check and the agent runner's startup check.
+```mermaid
+flowchart LR
+  Job["JobRequested on Somnia"]
+  Agents["velo-agents — Form Analyst"]
+  Engine["velo-engine"]
+  LLM["LLM"]
+  Chain["Signed form receipt"]
 
-The `render.yaml` at the root of the repository has a ready-to-use service definition for Render. Full deployment instructions, including how to connect the engine to the agent runner, are in `docs/DEPLOY.md`.
+  Job --> Agents
+  Agents -->|"POST /analyze"| Engine
+  Engine -->|"TennisTelemetry"| Agents
+  Agents --> LLM
+  Agents --> Chain
+```
 
-For production use, increase `MAX_VIDEO_DURATION_S` and consider `MEDIAPIPE_MODEL_COMPLEXITY=2` (heavier, more accurate) — free tiers run on modest hardware, so the default settings are balanced for speed.
+The engine has no awareness of wallets, receipts, or the chain. It is a pure analysis function called by the Form Analyst during step one of the pipeline. The agent runner reaches it via `VISION_ENGINE_URL`.
