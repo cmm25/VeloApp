@@ -1,5 +1,6 @@
 """Shared video I/O — backbone-neutral so neither pose engine is forced to import the other."""
 
+import hashlib
 import json
 import logging
 import os
@@ -76,6 +77,31 @@ async def download_video(url: str, max_duration_s: float = 45.0) -> str:
     return tmp_path
 
 
+def frame_stream_sha256(path: str) -> Optional[str]:
+    """
+    SHA-256 of the DECODED raw frame stream (the exact yuv420p pixels OpenCV/YOLO see),
+    not the codec-dependent .mp4 bytes. This is the honest determinism anchor: it proves
+    the decode is reproducible independently of model nondeterminism. Computed only on the
+    canonical/on-chain path (it re-decodes the whole clip). Returns None if ffmpeg absent.
+    """
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return None
+    cmd = [ffmpeg, "-nostdin", "-i", path, "-map", "0:v:0", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"]
+    try:
+        h = hashlib.sha256()
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        for chunk in iter(lambda: proc.stdout.read(1 << 20), b""):
+            h.update(chunk)
+        proc.stdout.close()
+        if proc.wait(timeout=180) != 0:
+            return None
+        return h.hexdigest()
+    except Exception as e:
+        log.warning(f"frame_stream_sha256 failed: {e}")
+        return None
+
+
 def _probe_fps(ffprobe: str, path: str) -> tuple[Optional[float], Optional[bool]]:
     """Return (fps, is_vfr) via ffprobe; (None, None) on failure. VFR ⇔ avg_frame_rate ≠ r_frame_rate."""
     try:
@@ -131,7 +157,15 @@ def ensure_cfr(video_path: str, target_fps: Optional[int] = None) -> tuple[str, 
     out_path = f"{video_path}.cfr{fps}.mp4"
 
     base = [ffmpeg, "-nostdin", "-y", "-i", video_path, "-map", "0:v:0", "-vf", "format=yuv420p"]
-    tail = ["-r", str(fps), "-c:v", "libx264", "-preset", "veryfast", "-an", out_path]
+    # Single-thread + bitexact so the transcode is reproducible on the pinned image.
+    # (The on-chain anchor is the decoded frame-stream hash, not these libx264 bytes —
+    # see frame_stream_sha256 — but a reproducible encode keeps the decoded pixels stable.)
+    tail = [
+        "-r", str(fps), "-c:v", "libx264", "-preset", "veryfast",
+        "-x264-params", "threads=1:sliced-threads=0:deterministic=1",
+        "-threads", "1", "-fflags", "+bitexact", "-flags", "+bitexact",
+        "-map_metadata", "-1", "-an", out_path,
+    ]
     for rate_flag in (["-fps_mode", "cfr"], ["-vsync", "cfr"]):  # modern flag, then legacy fallback
         try:
             r = subprocess.run(base + rate_flag + tail, capture_output=True, text=True, timeout=300)

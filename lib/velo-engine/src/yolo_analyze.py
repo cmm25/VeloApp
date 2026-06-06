@@ -5,8 +5,12 @@ Uses Ultralytics tracking so coach+student clips select the most-active player
 instead of the largest box. Geometry remains deterministic NumPy math.
 """
 
+from . import determinism as _det  # FIRST — sets thread env before numpy/cv2 build pools
+
 import base64
+import copy
 import logging
+import math
 import os
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -78,6 +82,10 @@ DENSE_STROKE_WINDOW = os.getenv("DENSE_STROKE_WINDOW", "1").lower() not in ("0",
 
 _model = None
 _model_lock = Lock()
+_WEIGHTS_SHA: Optional[str] = None
+_PINNED_TRACKER = os.path.join(os.path.dirname(__file__), "botsort_pinned.yaml")
+# Canonical stroke priority (enum declaration order) for deterministic count-tie resolution.
+CANON_STROKE = {s: i for i, s in enumerate(DominantStroke)}
 
 
 def _resolve_backbone(weights: Optional[str]) -> str:
@@ -85,6 +93,25 @@ def _resolve_backbone(weights: Optional[str]) -> str:
     never advertises a backbone that disagrees with `weights` (the old hardcode bug)."""
     stem = os.path.splitext(os.path.basename(weights or ""))[0]
     return stem or "yolo-pose"
+
+
+def _hashable_subset(d: dict) -> dict:
+    """The canonical-hash surface: drop volatile/non-reproducible fields (URLs, notes,
+    is_mock, the hash itself, and codec-dependent keyframe JPEGs). Keep all numeric
+    telemetry + provenance. The deterministic hash is computed over this subset."""
+    d = copy.deepcopy(d)
+    for k in ("telemetryHash", "isMock", "analysisNotes"):
+        d.pop(k, None)
+    if isinstance(d.get("video"), dict):
+        d["video"].pop("url", None)
+        d["video"].pop("cid", None)
+    if isinstance(d.get("summary"), dict):
+        d["summary"].pop("videoUrl", None)
+        d["summary"].pop("analysisNotes", None)
+    for s in d.get("strokes", []) or []:
+        if isinstance(s, dict):
+            s.pop("keyframes", None)
+    return d
 
 
 @dataclass
@@ -111,20 +138,23 @@ class TrackStats:
 
 
 def get_model(weights: Optional[str] = None):
-    global _model
+    global _model, _WEIGHTS_SHA
     with _model_lock:
         if _model is None:
+            _det.pin_determinism()  # single-thread + seed + deterministic algorithms
             from ultralytics import YOLO
             w = weights or _DEFAULT_WEIGHTS
             log.info(f"Loading YOLO pose model: {w}")
             _model = YOLO(w)
+            _WEIGHTS_SHA = _det.weights_sha256(getattr(_model, "ckpt_path", None) or w)
         return _model
 
 
 def _mean_conf(conf: np.ndarray) -> float:
     if conf is None or len(conf) == 0:
         return 0.0
-    return float(np.mean(conf))
+    vals = [float(c) for c in conf]
+    return round(math.fsum(vals) / len(vals), 6)
 
 
 def _bbox_norm(obs: Observation, width: int, height: int) -> list[float]:
@@ -138,12 +168,14 @@ def _bbox_norm(obs: Observation, width: int, height: int) -> list[float]:
 
 
 def _mean_bbox_norm(track: TrackStats, width: int, height: int) -> list[float]:
-    vals = np.array([_bbox_norm(o, width, height) for o in track.observations], dtype=float)
-    return [float(v) for v in vals.mean(axis=0)]
+    rows = [_bbox_norm(o, width, height) for o in track.observations]
+    n = len(rows) or 1
+    return [round(math.fsum(r[c] for r in rows) / n, 6) for c in range(4)]
 
 
 def _mean_bbox_area(track: TrackStats) -> float:
-    return float(np.mean([o.bbox_xywh[2] * o.bbox_xywh[3] for o in track.observations]))
+    areas = [float(o.bbox_xywh[2] * o.bbox_xywh[3]) for o in track.observations]
+    return round(math.fsum(areas) / (len(areas) or 1), 6)
 
 
 def _centrality(track: TrackStats, width: int, height: int) -> float:
@@ -173,8 +205,8 @@ def _update_motion(track: TrackStats, obs: Observation, fps: float):
         prev = track.observations[-1]
         valid = (obs.conf >= KP_CONF_MIN) & (prev.conf >= KP_CONF_MIN)
         if valid.any():
-            disp = np.linalg.norm(obs.xy[valid] - prev.xy[valid], axis=1)
-            track.motion_energy += float(np.mean(disp))
+            disp = [float(x) for x in np.linalg.norm(obs.xy[valid] - prev.xy[valid], axis=1)]
+            track.motion_energy = round(track.motion_energy + math.fsum(disp) / len(disp), 6)
         for side in ("left", "right"):
             idx = KP[f"{side}_wrist"]
             if obs.conf[idx] >= KP_CONF_MIN and prev.conf[idx] >= KP_CONF_MIN:
@@ -207,17 +239,19 @@ def _select_track(
         if subject.track_id not in tracks:
             raise ValueError(f"Requested subject.track_id={subject.track_id} was not detected.")
         return tracks[subject.track_id], SubjectStrategy.track_id
+    # Every key ends in -track_id so ties resolve by LOWEST track_id, independent of
+    # dict-iteration / detector order (R11). Float keys are already round-6 (helpers).
     if subject.strategy == SubjectStrategy.roi:
-        return max(candidates, key=lambda t: _roi_overlap(t, subject.roi_bbox or [0, 0, 1, 1], width, height)), SubjectStrategy.roi
+        return max(candidates, key=lambda t: (round(_roi_overlap(t, subject.roi_bbox or [0, 0, 1, 1], width, height), 6), len(t.observations), -t.track_id)), SubjectStrategy.roi
     if subject.strategy == SubjectStrategy.center:
-        return max(candidates, key=lambda t: (_centrality(t, width, height), len(t.observations))), SubjectStrategy.center
+        return max(candidates, key=lambda t: (round(_centrality(t, width, height), 6), len(t.observations), -t.track_id)), SubjectStrategy.center
     if subject.strategy == SubjectStrategy.largest:
-        return max(candidates, key=lambda t: (_mean_bbox_area(t), len(t.observations))), SubjectStrategy.largest
+        return max(candidates, key=lambda t: (_mean_bbox_area(t), len(t.observations), -t.track_id)), SubjectStrategy.largest
 
     motion_values = [t.motion_energy for t in candidates]
     if subject.strategy == SubjectStrategy.auto and (max(motion_values) - min(motion_values) < 1.0):
-        return max(candidates, key=lambda t: (_mean_bbox_area(t), len(t.observations))), SubjectStrategy.largest
-    return max(candidates, key=lambda t: (t.motion_energy, _mean_bbox_area(t))), SubjectStrategy.most_active
+        return max(candidates, key=lambda t: (_mean_bbox_area(t), len(t.observations), -t.track_id)), SubjectStrategy.largest
+    return max(candidates, key=lambda t: (t.motion_energy, _mean_bbox_area(t), -t.track_id)), SubjectStrategy.most_active
 
 
 def _resolve_handedness(track: TrackStats, hint: Optional[str]) -> tuple[str, str]:
@@ -321,7 +355,7 @@ def _dense_pass(video_path: str, ranges: list[tuple[int, int, int]], ref_centers
                 break
             active = [wid for wid, f0, f1 in ranges if f0 <= fidx <= f1]
             if active:
-                res = model.predict(frame, verbose=False, conf=YOLO_DET_CONF_MIN)[0]
+                res = model.predict(frame, verbose=False, conf=YOLO_DET_CONF_MIN, device="cpu", half=False)[0]
                 if res.keypoints is not None and res.boxes is not None and len(res.boxes) > 0:
                     boxes = res.boxes.xywh.cpu().numpy()
                     xy_all = res.keypoints.xy.cpu().numpy()
@@ -336,7 +370,10 @@ def _dense_pass(video_path: str, ranges: list[tuple[int, int, int]], ref_centers
                         score = np.linalg.norm(centers - ref, axis=1)
                         if wid in prev_center:
                             score = score + np.linalg.norm(centers - prev_center[wid], axis=1)
-                        k = int(np.argmin(score))
+                        # Total-order tie-break: nearest score, then spatial (x,y) — no argmin
+                        # first-index dependence on detector output order (R12).
+                        k = min(range(len(score)), key=lambda j: (
+                            round(float(score[j]), 4), round(float(centers[j, 0]), 2), round(float(centers[j, 1]), 2)))
                         prev_center[wid] = centers[k]
                         collected[wid].append((fidx, xy_all[k], conf_np[k]))
             fidx += 1
@@ -368,15 +405,30 @@ def analyze_video_file(
     keyframe_format: KeyframeFormat = KeyframeFormat.base64,
     emit_raw_keypoints: bool = False,
     normalized_cfr: bool = False,
+    cfr_fps: Optional[float] = None,
+    frame_stream_sha256: Optional[str] = None,
 ) -> TennisTelemetry:
     model = get_model()
     subject = subject or SubjectRequest()
+    # R2: reset BoT-SORT state so persist=True on the global singleton can't bleed
+    # track IDs/Kalman state from a previously-analyzed clip into this one.
+    try:
+        pred = getattr(model, "predictor", None)
+        if pred is not None and getattr(pred, "trackers", None):
+            pred.trackers[0].reset()
+    except Exception:
+        pass
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
         raise ValueError(f"Cannot open video: {video_path}")
 
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    # R5: trust the exact CFR fps on the normalized path; round the fallback so a
+    # decoder-parse jitter in CAP_PROP_FPS can't propagate into every Δt / interval.
+    if normalized_cfr and cfr_fps:
+        fps = float(cfr_fps)
+    else:
+        fps = round(float(cap.get(cv2.CAP_PROP_FPS) or 30.0), 3)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
@@ -396,7 +448,10 @@ def analyze_video_file(
             continue
 
         sampled_frames += 1
-        result = model.track(frame, persist=True, verbose=False, conf=YOLO_DET_CONF_MIN)[0]
+        result = model.track(
+            frame, persist=True, verbose=False, conf=YOLO_DET_CONF_MIN,
+            device="cpu", half=False, tracker=_PINNED_TRACKER,
+        )[0]
         if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
             no_person += 1
             frame_idx += 1
@@ -414,7 +469,7 @@ def analyze_video_file(
                 frame_index=frame_idx,
                 timestamp_ms=(frame_idx / fps) * 1000,
                 xy=xy_all[det_idx],
-                conf=conf_np[det_idx],
+                conf=np.round(conf_np[det_idx], 4),  # stable >= KP_CONF_MIN gates across arch
                 bbox_xywh=boxes[det_idx],
                 frame=frame.copy() if emit_keyframes else None,
             )
@@ -432,8 +487,8 @@ def analyze_video_file(
 
     # ── Signal layer: validity gates (on RAW) → zero-phase smoothing → geometry.
     sel_obs = selected.observations
-    xy_raw = np.array([o.xy for o in sel_obs], dtype=float)       # (T,17,2)
-    conf_raw = np.array([o.conf for o in sel_obs], dtype=float)   # (T,17)
+    xy_raw = np.round(np.array([o.xy for o in sel_obs], dtype=float), 2)   # (T,17,2) quantized
+    conf_raw = np.array([o.conf for o in sel_obs], dtype=float)            # (T,17) already round-4
     fps_eff = (fps / sample_rate) if sample_rate > 0 else fps      # coarse-pass analyzed fps
 
     # Validity gates run on RAW coords (they catch detector errors smoothing would mask).
@@ -477,7 +532,8 @@ def analyze_video_file(
             # Δt = actual source-frame gap / fps (robust to skipped low-conf frames),
             # so px/s = ‖Δxy‖ * fps / Δframes — the missing-/sample_rate scaling fix.
             d_frames = max(1, obs.frame_index - prev_frame_index)
-            wrist_vel = float(np.linalg.norm(sm_xy[wrist_idx] - prev_wrist) * fps / d_frames)
+            dx = float(sm_xy[wrist_idx, 0] - prev_wrist[0]); dy = float(sm_xy[wrist_idx, 1] - prev_wrist[1])
+            wrist_vel = round(math.hypot(dx, dy) * fps / d_frames, 6)
         prev_wrist = sm_xy[wrist_idx].copy()
         prev_frame_index = obs.frame_index
 
@@ -576,10 +632,10 @@ def analyze_video_file(
         # never publishes two different-fps numbers for the same physical wrist.
         if idx in dense_series and kc.get("arm_peak_tl_per_s") is not None and torso_len:
             peak_tl = kc["arm_peak_tl_per_s"]
-            peak_px = peak_tl * torso_len
+            peak_px = round(peak_tl * torso_len, 6)
         else:
-            peak_px = max(wrist_velocities[start : end + 1] or [0.0])
-            peak_tl = (peak_px / torso_len) if (torso_len and torso_len > 0) else None
+            peak_px = round(max(wrist_velocities[start : end + 1] or [0.0]), 6)
+            peak_tl = round(peak_px / torso_len, 6) if (torso_len and torso_len > 0) else None
 
         strokes.append(StrokeTelemetry(
             index=idx,
@@ -602,7 +658,11 @@ def analyze_video_file(
 
     peak_angles, avg_angles = summarize_angles(angles_list)
     consistency = compute_consistency_score(angles_list)
-    dominant = Counter(stroke_types).most_common(1)[0][0] if stroke_types else DominantStroke.unknown
+    # Deterministic count-tie break: highest count, then canonical enum order (R10).
+    dominant = (
+        min(Counter(stroke_types).items(), key=lambda kv: (-kv[1], CANON_STROKE.get(kv[0], 99)))[0]
+        if stroke_types else DominantStroke.unknown
+    )
     mean_conf = float(np.mean(confidences))
     ambiguous = sum(1 for t in tracks.values() if t.track_id != selected.track_id and t.observations)
     key_phases = select_key_phases(phase_data)
@@ -653,6 +713,7 @@ def analyze_video_file(
         height=height,
         frames_total=total_frames,
         frames_analyzed=len(angles_list),
+        frame_stream_sha256=frame_stream_sha256,
     )
     summary = Summary(
         video_url=video_url,
@@ -668,7 +729,7 @@ def analyze_video_file(
         analysis_notes=notes,
     )
 
-    return TennisTelemetry(
+    telemetry = TennisTelemetry(
         schema_version="2.1",
         is_mock=False,
         engine=EngineInfo(
@@ -682,6 +743,8 @@ def analyze_video_file(
             timing_granularity_ms=clip_granularity_ms,
             smoothing=SMOOTHING_LABEL if smoothed else None,
             normalized_cfr=normalized_cfr,
+            weights_sha256=_WEIGHTS_SHA,
+            lib_versions=_det.lib_versions(),
         ),
         video=video,
         subject=SubjectInfo(
@@ -690,7 +753,7 @@ def analyze_video_file(
             handedness=handedness,
             handedness_source=handedness_source,
             bbox_mean_norm=_mean_bbox_norm(selected, width, height),
-            mean_keypoint_confidence=float(np.mean([_mean_conf(o.conf) for o in selected.observations])),
+            mean_keypoint_confidence=round(math.fsum(_mean_conf(o.conf) for o in selected.observations) / max(1, len(selected.observations)), 6),
             frames_present=len(selected.observations),
         ),
         keypoint_spec=KeypointSpec(names=COCO17_NAMES),
@@ -708,3 +771,6 @@ def analyze_video_file(
         analysis_notes=notes,
         summary=summary,
     )
+    # R4: commit hash over the canonical numeric subset (volatile fields dropped).
+    telemetry.telemetry_hash = _det.telemetry_hash(_hashable_subset(telemetry.model_dump(by_alias=True, mode="json")))
+    return telemetry

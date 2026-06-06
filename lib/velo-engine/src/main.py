@@ -11,6 +11,8 @@ Run locally:
   uvicorn src.main:app --reload --port 8000
 """
 
+from . import determinism as _det  # FIRST — sets thread env before numpy/torch import
+
 import asyncio
 import logging
 import os
@@ -40,6 +42,7 @@ VISION_ENGINE = (
 async def lifespan(app: FastAPI):
     log.info(f"Velo Vision Engine starting up (engine={VISION_ENGINE})…")
     app.state.warmup_error = None
+    _det.pin_determinism()  # single-thread + seed + deterministic algorithms (idempotent)
     try:
         # Eager-build the analyzer so the model warms before the first request.
         await asyncio.get_event_loop().run_in_executor(None, get_analyzer)

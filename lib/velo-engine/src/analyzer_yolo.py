@@ -14,10 +14,14 @@ from typing import Optional
 
 from .analyzer_base import VideoAnalyzer
 from .models import AnalyzeRequest, TennisTelemetry
-from .video_io import ensure_cfr
+from .video_io import ensure_cfr, frame_stream_sha256
 from .yolo_analyze import analyze_video_file, get_model
 
 log = logging.getLogger("analyzer.yolo")
+
+# Canonical/on-chain mode: also compute the (expensive) decoded-frame-stream hash as the
+# determinism anchor. Off by default so normal /analyze stays fast.
+CANONICAL = os.getenv("DET_CANONICAL", "0").lower() not in ("0", "false", "no")
 
 
 class YoloAnalyzer(VideoAnalyzer):
@@ -33,8 +37,9 @@ class YoloAnalyzer(VideoAnalyzer):
         max_duration_s: float = 45.0,
         request: Optional[AnalyzeRequest] = None,
     ) -> TennisTelemetry:
-        cfr_path, normalized, _ = ensure_cfr(video_path)
+        cfr_path, normalized, cfr_fps = ensure_cfr(video_path)
         try:
+            frame_sha = frame_stream_sha256(cfr_path) if CANONICAL else None
             kwargs = {}
             if request is not None:
                 kwargs = dict(
@@ -44,13 +49,15 @@ class YoloAnalyzer(VideoAnalyzer):
                     keyframe_format=request.keyframe_format,
                     emit_raw_keypoints=request.emit_raw_keypoints,
                 )
-            log.info(f"YOLO backend: analyzing {cfr_path} (cfr={normalized})")
+            log.info(f"YOLO backend: analyzing {cfr_path} (cfr={normalized}, fps={cfr_fps})")
             return analyze_video_file(
                 cfr_path,
                 video_url,
                 sample_rate=sample_rate,
                 max_duration_s=max_duration_s,
                 normalized_cfr=normalized,
+                cfr_fps=cfr_fps,
+                frame_stream_sha256=frame_sha,
                 **kwargs,
             )
         finally:

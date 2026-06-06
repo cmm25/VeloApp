@@ -203,6 +203,12 @@ class EngineInfo(CamelModel):
     normalized_cfr: Optional[bool] = Field(
         default=None, description="True if input was transcoded to constant-frame-rate before analysis (timestamp/determinism anchor).",
     )
+    weights_sha256: Optional[str] = Field(
+        default=None, description="SHA-256 of the loaded pose weights — pins WHICH model produced this telemetry.",
+    )
+    lib_versions: Optional[dict] = Field(
+        default=None, description="Pinned runtime versions (torch/ultralytics/numpy/scipy/cv2) the hash is reproducible against.",
+    )
 
 
 class VideoInfo(CamelModel):
@@ -214,6 +220,9 @@ class VideoInfo(CamelModel):
     height: int
     frames_total: int
     frames_analyzed: int
+    frame_stream_sha256: Optional[str] = Field(
+        default=None, description="SHA-256 of the decoded raw frame stream (canonical mode) — the I/O determinism anchor.",
+    )
 
 
 class SubjectInfo(CamelModel):
@@ -280,6 +289,9 @@ class Summary(CamelModel):
 class TennisTelemetry(CamelModel):
     schema_version: Literal["2.0", "2.1"] = "2.1"
     is_mock: bool = False
+    telemetry_hash: Optional[str] = Field(
+        default=None, description="sha256 over the canonical numeric telemetry (the on-chain commitment). Reproducible on the pinned arch/image.",
+    )
     engine: EngineInfo
     video: VideoInfo
     subject: SubjectInfo

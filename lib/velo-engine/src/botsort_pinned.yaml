@@ -1,0 +1,18 @@
+# Velo pinned BoT-SORT tracker (determinism R2).
+# Copy of ultralytics botsort.yaml with gmc_method DISABLED: the default
+# `sparseOptFlow` runs calcOpticalFlowPyrLK + RANSAC estimateAffinePartial2D per
+# frame pair — an unseeded/float-fragile global-motion-compensation path. We hash
+# telemetry on-chain, so we remove it entirely (None) rather than rely on cv2 RNG
+# seeding. Vendored (not the package default) so an ultralytics upgrade can't
+# silently change tracker behavior under us.
+tracker_type: botsort
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 30
+match_thresh: 0.8
+fuse_score: True
+gmc_method: None
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+with_reid: False

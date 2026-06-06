@@ -12,6 +12,7 @@ New work goes here.
 """
 
 import math
+from functools import lru_cache
 from typing import Optional
 
 import numpy as np
@@ -25,17 +26,38 @@ from .models import (
 )
 
 
+def _fsum_mean_std(vals: list[float]) -> tuple[float, float]:
+    """Order-independent (math.fsum) mean + population std — deterministic across
+    thread/reduction order, unlike np.mean/np.std."""
+    n = len(vals)
+    if n == 0:
+        return 0.0, 0.0
+    mean = math.fsum(vals) / n
+    var = math.fsum((v - mean) ** 2 for v in vals) / n
+    return mean, math.sqrt(var)
+
+
+def _norm(v: list[float]) -> float:
+    return math.sqrt(math.fsum(x * x for x in v))
+
+
 def angle_between(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
-    """Angle at vertex B formed by rays B→A and B→C, in degrees. 2D or 3D."""
-    ba = a - b
-    bc = c - b
-    cosine = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc) + 1e-8)
-    return float(math.degrees(math.acos(np.clip(cosine, -1.0, 1.0))))
+    """Angle at vertex B formed by rays B→A and B→C, in degrees. 2D or N-D.
+
+    Scalar math (no BLAS np.dot, no FMA dispatch) + math.fsum + round(6) so the value
+    is stable across CPU microarchitectures, not just thread counts. Handles 2D (YOLO
+    COCO-17) and 3D (MediaPipe) inputs. Inputs are pre-quantized keypoints (see
+    smooth_keypoints), so this is the deterministic angle source."""
+    ba = [float(a[i] - b[i]) for i in range(len(a))]
+    bc = [float(c[i] - b[i]) for i in range(len(b))]
+    dot = math.fsum(ba[i] * bc[i] for i in range(len(ba)))
+    n = _norm(ba) * _norm(bc) + 1e-8
+    return round(math.degrees(math.acos(max(-1.0, min(1.0, dot / n)))), 6)
 
 
 def angle_to_axis(a: np.ndarray, b: np.ndarray, axis: np.ndarray) -> float:
     """
-    Angle (deg) between segment A→B and a fixed world `axis`.
+    Angle (deg) between segment A→B and a fixed world `axis`. 2D or N-D. Scalar+fsum+round(6).
 
     Used for the forearm-orientation wrist proxy: COCO-17 has no hand/finger
     keypoint, so true wrist-snap (index-wrist-elbow) is not measurable from body
@@ -44,9 +66,11 @@ def angle_to_axis(a: np.ndarray, b: np.ndarray, axis: np.ndarray) -> float:
     stroke phases. It is upgraded to true wrist-snap once the racket-tip
     keypoint is added (P2).
     """
-    v = b - a
-    cosine = np.dot(v, axis) / (np.linalg.norm(v) * np.linalg.norm(axis) + 1e-8)
-    return float(math.degrees(math.acos(np.clip(cosine, -1.0, 1.0))))
+    v = [float(b[i] - a[i]) for i in range(len(a))]
+    ax = [float(axis[i]) for i in range(len(axis))]
+    dot = math.fsum(v[i] * ax[i] for i in range(len(v)))
+    n = _norm(v) * _norm(ax) + 1e-8
+    return round(math.degrees(math.acos(max(-1.0, min(1.0, dot / n)))), 6)
 
 
 def classify_stroke_phase(angles_seq: list[JointAngles], idx: int) -> StrokePhase:
@@ -87,14 +111,13 @@ def compute_consistency_score(angles_list: list[JointAngles]) -> float:
     fields = ["shoulder", "elbow", "wrist", "hip", "knee"]
     cv_scores = []
     for f in fields:
-        vals = [getattr(a, f) for a in angles_list]
-        mean = np.mean(vals)
-        std = np.std(vals)
-        cv = std / (mean + 1e-8)
-        score = max(0.0, 1.0 - cv / 0.3)
-        cv_scores.append(score)
+        vals = [float(getattr(a, f)) for a in angles_list]
+        mean = math.fsum(vals) / len(vals)
+        var = math.fsum((v - mean) ** 2 for v in vals) / len(vals)
+        cv = math.sqrt(var) / (mean + 1e-8)
+        cv_scores.append(max(0.0, 1.0 - cv / 0.3))
 
-    return float(np.mean(cv_scores))
+    return round(math.fsum(cv_scores) / len(cv_scores), 6)
 
 
 def compute_symmetry_score(angles_list: list[JointAngles]) -> float:
@@ -114,7 +137,7 @@ def detect_dominant_stroke(angles_list: list[JointAngles]) -> DominantStroke:
         return DominantStroke.serve
     if peak_wrist < 145:
         return DominantStroke.volley
-    avg_hip = np.mean([a.hip for a in angles_list])
+    avg_hip = round(math.fsum(a.hip for a in angles_list) / len(angles_list), 6)
     if avg_hip > 160:
         return DominantStroke.forehand
     return DominantStroke.backhand
@@ -125,8 +148,9 @@ def count_strokes(angles_list: list[JointAngles]) -> int:
     if len(angles_list) < 5:
         return max(1, len(angles_list) // 3)
 
-    wrist_seq = np.array([a.wrist for a in angles_list])
-    threshold = np.mean(wrist_seq) + 0.3 * np.std(wrist_seq)
+    wrist_seq = [float(a.wrist) for a in angles_list]
+    _m, _s = _fsum_mean_std(wrist_seq)
+    threshold = round(_m + 0.3 * _s, 6)
     in_stroke = False
     count = 0
     for w in wrist_seq:
@@ -151,7 +175,8 @@ def stroke_windows(angles_list: list[JointAngles], frame_indices: list[int]) -> 
         return [(0, max(0, n // 2), n - 1)]
 
     wrist_seq = np.array([a.wrist for a in angles_list], dtype=float)
-    threshold = float(np.mean(wrist_seq) + 0.3 * np.std(wrist_seq))
+    _m, _s = _fsum_mean_std([float(x) for x in wrist_seq])
+    threshold = round(_m + 0.3 * _s, 6)
     peaks: list[int] = []
     for i in range(1, n - 1):
         if wrist_seq[i] >= threshold and wrist_seq[i] >= wrist_seq[i - 1] and wrist_seq[i] >= wrist_seq[i + 1]:
@@ -195,12 +220,13 @@ def summarize_angles(angles_list: list[JointAngles]) -> tuple[JointAngles, Joint
         hip=max(a.hip for a in angles_list),
         knee=max(a.knee for a in angles_list),
     )
+    n = len(angles_list)
     avg = JointAngles(
-        shoulder=float(np.mean([a.shoulder for a in angles_list])),
-        elbow=float(np.mean([a.elbow for a in angles_list])),
-        wrist=float(np.mean([a.wrist for a in angles_list])),
-        hip=float(np.mean([a.hip for a in angles_list])),
-        knee=float(np.mean([a.knee for a in angles_list])),
+        shoulder=round(math.fsum(a.shoulder for a in angles_list) / n, 6),
+        elbow=round(math.fsum(a.elbow for a in angles_list) / n, 6),
+        wrist=round(math.fsum(a.wrist for a in angles_list) / n, 6),
+        hip=round(math.fsum(a.hip for a in angles_list) / n, 6),
+        knee=round(math.fsum(a.knee for a in angles_list) / n, 6),
     )
     return peak, avg
 
@@ -222,6 +248,14 @@ SMOOTHING_LABEL = "butterworth4_zerophase_8hz"
 # filtfilt requires len(x) > padlen, where default padlen = 3*max(len(a),len(b)) and
 # len(a)=len(b)=BUTTER_ORDER+1. So we need len >= 3*(order+1)+1 (= 16 for order 4).
 _FILTFILT_MIN_LEN = 3 * (BUTTER_ORDER + 1) + 1
+_KP_GRID_DP = 2  # round smoothed keypoints to 0.01px before geometry (R6/a1: cross-arch buffer)
+
+
+@lru_cache(maxsize=16)
+def _butter_coeffs(wn_key: float, order: int):
+    """Frozen Butterworth coefficients — butter() runs LAPACK root-finding per call;
+    caching on a rounded wn removes that as a per-run variance source (R7)."""
+    return butter(order, wn_key, btype="low")
 
 
 def smooth_keypoints(xy_seq: np.ndarray, fps_effective: float) -> np.ndarray:
@@ -240,13 +274,15 @@ def smooth_keypoints(xy_seq: np.ndarray, fps_effective: float) -> np.ndarray:
     honest: there is nothing to filter that wouldn't destroy signal).
     """
     arr = np.asarray(xy_seq, dtype=float)
+    # Quantize coordinates to a fixed grid BEFORE geometry (the round-keypoints-before-
+    # geometry mandate) so identical rounded inputs → bit-identical angles across arch.
     if arr.ndim != 3 or arr.shape[0] < _FILTFILT_MIN_LEN or fps_effective <= 0:
-        return arr
+        return np.round(arr, _KP_GRID_DP)
     nyq = 0.5 * fps_effective
     wn = BUTTER_CUTOFF_HZ / nyq
     if wn >= 1.0:
-        return arr  # cutoff above Nyquist → no meaningful low-pass at this fps
-    b, a = butter(BUTTER_ORDER, wn, btype="low")
+        return np.round(arr, _KP_GRID_DP)  # cutoff above Nyquist → no meaningful low-pass
+    b, a = _butter_coeffs(round(wn, 9), BUTTER_ORDER)
     # Defense-in-depth: cap padlen below the series length so a borderline window
     # can never raise even if the guard above is ever loosened.
     padlen = min(3 * max(len(a), len(b)), arr.shape[0] - 1)
@@ -254,7 +290,7 @@ def smooth_keypoints(xy_seq: np.ndarray, fps_effective: float) -> np.ndarray:
     for k in range(arr.shape[1]):
         for ax in range(2):
             out[:, k, ax] = filtfilt(b, a, arr[:, k, ax], padlen=padlen)
-    return out
+    return np.round(out, _KP_GRID_DP)
 
 
 def point_speed_series(points: np.ndarray, valid: np.ndarray, fps_effective: float) -> np.ndarray:
@@ -271,7 +307,9 @@ def point_speed_series(points: np.ndarray, valid: np.ndarray, fps_effective: flo
     dt = 1.0 / fps_effective
     for t in range(1, T - 1):
         if valid[t - 1] and valid[t + 1]:
-            speeds[t] = float(np.linalg.norm(pts[t + 1] - pts[t - 1]) / (2.0 * dt))
+            dx = float(pts[t + 1, 0] - pts[t - 1, 0])
+            dy = float(pts[t + 1, 1] - pts[t - 1, 1])
+            speeds[t] = round(math.hypot(dx, dy) / (2.0 * dt), 6)  # scalar + round → arch-stable
     return speeds
 
 
@@ -340,7 +378,7 @@ def kinematic_sequence(
     def _tl(v: Optional[float]) -> Optional[float]:
         if v is None or not torso_len_px or torso_len_px <= 0:
             return None
-        return float(v / torso_len_px)
+        return round(float(v) / float(torso_len_px), 6)
 
     # PRIMARY — speed-gain magnitude (proximal→distal monotonic speed increase).
     steps = [(peak_v[order[k]], peak_v[order[k + 1]]) for k in range(len(order) - 1)]
@@ -353,24 +391,23 @@ def kinematic_sequence(
     )
     hips_before_arm: Optional[bool] = None
     coherence: Optional[float] = None
-    if timing_resolvable and interval_ms is not None:
-        t_ms = {s: (peak_i[s] * interval_ms if peak_i[s] is not None else None) for s in order}
-        if t_ms["arm"] is not None and t_ms["trunk"] is not None:
-            gap = t_ms["arm"] - t_ms["trunk"]
-            if abs(gap) >= _TIMING_FLOOR_FACTOR * interval_ms:
-                hips_before_arm = gap > 0  # trunk (proximal) peaked before the arm
-        avail = [s for s in order if t_ms[s] is not None]
+    if timing_resolvable:
+        # Gate on INTEGER frame deltas (peak_i), not reconstructed float ms — removes the
+        # boundary straddle at exactly 1.5×interval. min_frames = ceil(1.5) = 2 frames.
+        min_frames = math.ceil(_TIMING_FLOOR_FACTOR)
+        ia, it = peak_i.get("arm"), peak_i.get("trunk")
+        if ia is not None and it is not None and abs(ia - it) >= min_frames:
+            hips_before_arm = (ia - it) > 0  # trunk (proximal) peaked before the arm
+        avail = [s for s in order if peak_i.get(s) is not None]
         if len(avail) >= 2:
             pairs = [(avail[i], avail[j]) for i in range(len(avail)) for j in range(i + 1, len(avail))]
-            # Real Kendall-τ remapped to [0,1]: ties are NEUTRAL (excluded), not
-            # concordant — otherwise a frozen/simultaneous-peak subject scores a
-            # spurious 1.0. All-tied ⇒ non-informative ⇒ leave coherence None.
-            concordant = sum(1 for a, b in pairs if t_ms[a] < t_ms[b])
-            discordant = sum(1 for a, b in pairs if t_ms[a] > t_ms[b])
+            # Real Kendall-τ remapped to [0,1] over INTEGER peak frames: ties NEUTRAL
+            # (excluded) — a frozen/simultaneous-peak subject ⇒ None, not a spurious 1.0.
+            concordant = sum(1 for a, b in pairs if peak_i[a] < peak_i[b])
+            discordant = sum(1 for a, b in pairs if peak_i[a] > peak_i[b])
             n_nontied = concordant + discordant
             if n_nontied > 0:
-                tau = (concordant - discordant) / n_nontied
-                coherence = (tau + 1.0) / 2.0
+                coherence = round(((concordant - discordant) / n_nontied + 1.0) / 2.0, 6)
 
     if timing_resolvable:
         note = f"granularity≈{interval_ms:.0f}ms; only trunk→arm hand-off is resolvable, adjacent-segment lags are not."
@@ -411,8 +448,8 @@ def torso_length_px(
         return None
     sc = (arr[ok, idx_lsh] + arr[ok, idx_rsh]) / 2.0
     hc = (arr[ok, idx_lhip] + arr[ok, idx_rhip]) / 2.0
-    lens = np.linalg.norm(sc - hc, axis=1)
-    val = float(np.median(lens))
+    lens = np.round(np.linalg.norm(sc - hc, axis=1), 4)
+    val = round(float(np.median(lens)), 6)
     return val if val > 1e-6 else None
 
 
@@ -440,8 +477,8 @@ def link_length_outlier_frames(
         ok = (conf[:, i] >= kp_conf_min) & (conf[:, j] >= kp_conf_min)
         if ok.sum() < 3:
             continue
-        lens = np.linalg.norm(arr[:, i] - arr[:, j], axis=1)
-        robust_max = float(np.percentile(lens[ok], 95))
+        lens = np.round(np.linalg.norm(arr[:, i] - arr[:, j], axis=1), 4)
+        robust_max = float(np.percentile(lens[ok], 95, method="lower"))  # actual sample, no interp drift
         invalid |= ok & (lens > robust_max * tol)
     return int(invalid.sum()), invalid
 
@@ -467,7 +504,7 @@ def acceleration_outlier_frames(
         p = arr[:, kpt, :]
         acc = np.full(T, np.nan)
         for t in range(1, T - 1):
-            acc[t] = np.linalg.norm(p[t + 1] - 2.0 * p[t] + p[t - 1]) / (dt * dt)
+            acc[t] = round(float(np.linalg.norm(p[t + 1] - 2.0 * p[t] + p[t - 1]) / (dt * dt)), 4)
         fin = np.isfinite(acc)
         if fin.sum() < 3:
             continue
