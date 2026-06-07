@@ -211,6 +211,16 @@ export function isVisionSkill(skill: Hex): boolean {
   return VISION_SKILLS.has(skill.toLowerCase());
 }
 
+/**
+ * The catalog of known video-analysis model skills (every `vision.*` entry in
+ * SKILL_NAMES, e.g. the default Pose & Form model and the Serve model). The
+ * direct-hire picker offers these so a coach can always choose a model, even
+ * before a given analysis agent is enumerated in the on-chain registry.
+ */
+export function catalogVisionSkills(): Hex[] {
+  return Array.from(VISION_SKILLS) as Hex[];
+}
+
 export function skillLabel(skill: Hex): string {
   return KNOWN_SKILLS[skill.toLowerCase()] ?? `${skill.slice(0, 10)}…`;
 }
