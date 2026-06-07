@@ -85,19 +85,34 @@ export type FormReport = z.infer<typeof FormReportSchema>;
 // prompts.ts for the full three-place checklist.
 
 export const ExternalModelOutputSchema = z.object({
-  // Which tennis aspect this model analysed (e.g. "serve", "rally", "footwork").
-  aspect: z.string().min(1).max(64),
-  // Named numeric measurements the model produced (keys are model-specific).
-  metrics: z.record(z.string(), z.number()).default({}),
-  // Free-text observations the model emitted about the clip.
-  observations: z.array(z.string().max(500)).max(20).default([]),
-  // Optional 0-1 confidence the model attaches to its analysis.
-  confidence: z.number().min(0).max(1).nullish(),
-  // Optional human-readable summary from the model itself.
-  notes: z.string().max(1000).nullish(),
+  schemaVersion: z.string(),
+  telemetryHash: z.string(),
+  summary: z.object({
+    dominantStroke: z.string(),
+    strokeCount: z.number(),
+    durationMs: z.number(),
+    framesAnalyzed: z.number(),
+    peakAngles: z.object({
+      shoulder: z.number(), elbow: z.number(),
+      wrist: z.number(), hip: z.number(), knee: z.number()
+    }),
+    avgAngles: z.object({
+      shoulder: z.number(), elbow: z.number(),
+      wrist: z.number(), hip: z.number(), knee: z.number()
+    }),
+    analysisNotes: z.string().nullable().optional()
+  }),
+  aggregate: z.object({
+    consistencyScore: z.number(),
+    peakProximalToDistalGain: z.number().nullable().optional()
+  }),
+  quality: z.object({
+    meanKeypointConfidence: z.number(),
+    clipQualityOk: z.boolean()
+  })
 });
-
 export type ExternalModelOutput = z.infer<typeof ExternalModelOutputSchema>;
+
 
 // Prescription Report (output of PrescriberAgent AI)
 
