@@ -17,7 +17,12 @@ import {
   useMinBountyFee,
   parseSttToWei,
 } from "@/lib/domain/bounties";
-import { useRegisteredAgents, skillLabel, isVisionSkill } from "@/lib/domain/agents";
+import {
+  useRegisteredAgents,
+  skillLabel,
+  isVisionSkill,
+  catalogVisionSkills,
+} from "@/lib/domain/agents";
 import { encodeJobSpec, skillHashOf } from "@/lib/domain/jobSpec";
 import { useAthleteDirectory, type Athlete } from "@/lib/domain/athletes";
 import {
@@ -117,11 +122,15 @@ export default function NewJob() {
     return Array.from(set) as Hex[];
   }, [registeredAgents]);
 
-  // Vision models a coach can route a DIRECT job to. Always includes the default
-  // pose model; any other registered "vision.*" agent skill is added so newly
-  // deployed analysis models appear automatically.
+  // Vision models a coach can route a DIRECT job to. Seeded with the known model
+  // catalog (the default pose model + the Serve model, etc.) so a coach can
+  // always choose; any other registered "vision.*" agent skill is merged in so
+  // newly deployed analysis models appear automatically.
   const visionModels = useMemo(() => {
-    const set = new Set<string>([DEFAULT_MODEL_SKILL.toLowerCase()]);
+    const set = new Set<string>([
+      DEFAULT_MODEL_SKILL.toLowerCase(),
+      ...catalogVisionSkills().map((s) => s.toLowerCase()),
+    ]);
     registeredAgents.forEach((a) =>
       a.skills.forEach((s) => {
         if (isVisionSkill(s)) set.add(s.toLowerCase());
