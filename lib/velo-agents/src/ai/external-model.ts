@@ -32,9 +32,15 @@ export async function callExternalModel(
     headers.Authorization = `Bearer ${config.externalModel.apiKey}`;
   }
 
+  // EXTERNAL_MODEL_URL is configured as a base host (mirroring ENGINE_URL), so
+  // the analysis route is appended here exactly like the vision-engine client.
+  // Tolerate a trailing slash or a URL that already includes the route.
+  const base = url.replace(/\/+$/, "");
+  const endpoint = base.endsWith("/analyze") ? base : `${base}/analyze`;
+
   const res = await withRetry(
     () =>
-      fetch(url, {
+      fetch(endpoint, {
         method: "POST",
         headers,
         body: JSON.stringify({ videoUrl, videoCid }),
@@ -58,8 +64,9 @@ export async function callExternalModel(
   }
 
   log.info("External model output received", {
-    aspect: parsed.data.aspect,
-    metricCount: Object.keys(parsed.data.metrics).length,
+    dominantStroke: parsed.data.summary.dominantStroke,
+    strokeCount: parsed.data.summary.strokeCount,
+    consistencyScore: parsed.data.aggregate.consistencyScore,
   });
   return parsed.data;
 }
