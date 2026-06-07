@@ -8,7 +8,10 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "build": "tsc",
-    "precheck": "tsx src/utils/precheck.ts"
+    "precheck": "tsx src/utils/precheck.ts",
+    "typecheck": "tsc --noEmit",
+    "mock:model": "node scripts/mock-external-model.mjs",
+    "verify:external": "tsx scripts/verify-external-model.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

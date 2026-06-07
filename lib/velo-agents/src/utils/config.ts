@@ -49,6 +49,29 @@ export const config = {
     prescriberPrivateKey: optional("AGENT_PRESCRIBER_PRIVATE_KEY"),
   },
 
+  // External, independently-trained analysis model (RunPod / Render-hosted).
+  // A whole new selectable agent that produces a FormReport for a different
+  // tennis aspect. INERT until both EXTERNAL_MODEL_URL and
+  // AGENT_EXTERNAL_PRIVATE_KEY are set (see externalModelConfigured()): without
+  // them the agent registers nothing, the picker only offers the Form model,
+  // and the existing pipeline is unchanged.
+  externalModel: {
+    // The model's base host. The agent appends /analyze and POSTs
+    // { videoUrl, videoCid } → JSON (same convention as ENGINE_URL).
+    url: optional("EXTERNAL_MODEL_URL", ""),
+    // Optional bearer token sent as Authorization to the model endpoint.
+    apiKey: optional("EXTERNAL_MODEL_API_KEY", ""),
+    // Dedicated funded EOA that signs + submits this agent's receipts on-chain.
+    privateKey: optional("AGENT_EXTERNAL_PRIVATE_KEY", ""),
+    // Canonical skill name the model advertises (hashed to bytes32 on-chain).
+    // The coach's picker routes a job to this agent by this skill.
+    skill: optional("EXTERNAL_MODEL_SKILL", "vision.serve"),
+    // Human label used at registration time.
+    name: optional("EXTERNAL_MODEL_NAME", "Velo Serve Analyst"),
+    // Max time to wait for the external model HTTP call (ms).
+    timeoutMs: optionalInt("EXTERNAL_MODEL_TIMEOUT_MS", 120_000),
+  },
+
   // Somnia native Agentic L1 (SomniaAgents / IAgentRequester platform)
   // When enabled, AI reasoning is produced by Somnia's native LLM Inference
   // agent (consensus-verified, with on-chain receipts) and falls back to Groq
@@ -160,4 +183,13 @@ export function validateRequiredForAgents(): void {
       `Cannot start agent runner. Missing required config:\n  ${missing.join("\n  ")}`
     );
   }
+}
+
+/**
+ * The external model is a no-op until BOTH its endpoint and its dedicated agent
+ * key are provided. Until then it registers nothing on-chain and ignores jobs,
+ * so the Form/Prescriber pipeline behaves exactly as before.
+ */
+export function externalModelConfigured(): boolean {
+  return Boolean(config.externalModel.url && config.externalModel.privateKey);
 }

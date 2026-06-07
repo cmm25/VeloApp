@@ -1,5 +1,5 @@
 import { useAccount } from "wagmi";
-import { Redirect, useLocation } from "wouter";
+import { Redirect } from "wouter";
 import { useMyOnChainRole } from "@/lib/domain/onchainRole";
 import { FullPageLoader } from "@/components/ui/spinner";
 import type { Role } from "@/lib/domain/roles";
@@ -19,12 +19,8 @@ export function RequireRole({
   children: ReactNode;
 }) {
   const { address, isConnected } = useAccount();
-  const [, setLocation] = useLocation();
   const { role: current, isLoading, error } = useMyOnChainRole();
-  if (!isConnected || !address) {
-    setLocation("/");
-    return null;
-  }
+  if (!isConnected || !address) return <Redirect to="/" />;
   if (isLoading) return <FullPageLoader label="Reading on-chain role…" />;
   if (error) {
     return (

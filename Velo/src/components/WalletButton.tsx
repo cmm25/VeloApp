@@ -49,7 +49,7 @@ export function WalletButton() {
     );
   }
 
-  if (chainId !== somniaTestnet.id) {
+  if (Number(chainId) !== somniaTestnet.id) {
     return (
       <Button
         variant="outline"
