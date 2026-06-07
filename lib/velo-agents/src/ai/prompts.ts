@@ -1,5 +1,6 @@
 import type { TennisTelemetry } from "./schemas.js";
 import type { FormReport } from "./schemas.js";
+import type { ExternalModelOutput } from "./schemas.js";
 
 export function buildFormAnalysisPrompt(telemetry: TennisTelemetry): string {
   const phases = telemetry.strokePhases
@@ -68,6 +69,68 @@ Rules:
 Respond with ONLY the JSON object, no markdown, no explanation.`;
 }
 
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ *  ⚠  THE SINGLE SPECIALIZATION POINT for the external analysis model.
+ * ════════════════════════════════════════════════════════════════════════════
+ * Everything else about the second model agent is generic and already wired:
+ * the HTTP client (external-model.ts), the on-chain registration, the routing,
+ * the Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
+ *
+ * The model is still in training, so this prompt and `ExternalModelOutputSchema`
+ * (schemas.ts) are deliberately GENERIC PLACEHOLDERS. They translate whatever the
+ * model reports (aspect + metrics + observations) into the standard FormReport.
+ *
+ * WHEN THE REAL MODEL IS READY, finalize the integration in exactly three places:
+ *   1. `ExternalModelOutputSchema` (schemas.ts) — tighten to the real output shape.
+ *   2. This function — tailor the translation to the model's actual aspect/metrics.
+ *   3. The skill name + label — `EXTERNAL_MODEL_SKILL` / `EXTERNAL_MODEL_NAME`
+ *      (config) and the matching entry in the frontend's SKILL_NAMES catalog
+ *      (Velo/src/lib/domain/agents.ts) so the picker shows a friendly name.
+ * Until then, leave this as-is: it produces a valid report from generic input.
+ * ════════════════════════════════════════════════════════════════════════════
+ */
+export function buildExternalModelPrompt(output: ExternalModelOutput): string {
+  const s = output.summary;
+  const gain = output.aggregate.peakProximalToDistalGain;
+
+  return `You are a professional tennis biomechanics analyst. A YOLO11-pose vision model has analysed a tennis clip. Translate its measurements into a coaching form analysis report.
+
+MODEL OUTPUT:
+- Dominant stroke: ${s.dominantStroke} (${s.strokeCount} strokes)
+- Duration: ${(s.durationMs / 1000).toFixed(1)}s, ${s.framesAnalyzed} frames analysed
+- Consistency score: ${(output.aggregate.consistencyScore * 100).toFixed(0)}%
+${gain != null ? `- Kinetic chain (proximal→distal gain): ${(gain * 100).toFixed(0)}% (100% = textbook)` : ""}
+- Keypoint confidence: ${(output.quality.meanKeypointConfidence * 100).toFixed(0)}%
+- Clip quality ok: ${output.quality.clipQualityOk}
+
+Peak angles (degrees):
+  Shoulder: ${s.peakAngles.shoulder.toFixed(1)}° | Elbow: ${s.peakAngles.elbow.toFixed(1)}° | Wrist: ${s.peakAngles.wrist.toFixed(1)}°
+  Hip: ${s.peakAngles.hip.toFixed(1)}° | Knee: ${s.peakAngles.knee.toFixed(1)}°
+
+Average angles (degrees):
+  Shoulder: ${s.avgAngles.shoulder.toFixed(1)}° | Elbow: ${s.avgAngles.elbow.toFixed(1)}° | Wrist: ${s.avgAngles.wrist.toFixed(1)}°
+  Hip: ${s.avgAngles.hip.toFixed(1)}° | Knee: ${s.avgAngles.knee.toFixed(1)}°
+
+${s.analysisNotes ? `Engine notes: ${s.analysisNotes}` : ""}
+
+TASK: Return a JSON object matching this schema exactly:
+{
+  "strokeType": "forehand"|"backhand"|"serve"|"volley"|"unknown",
+  "overallScore": <0-10>,
+  "issues": [{ "area": "shoulder"|"elbow"|"wrist"|"hip"|"knee"|"footwork"|"balance"|"timing"|"symmetry", "severity": "critical"|"moderate"|"minor", "phase": "preparation"|"contact"|"follow_through"|"overall", "observation": "<max 300 chars>", "recommendation": "<max 300 chars>" }],
+  "strengths": [{ "area": "<area>", "observation": "<max 200 chars>" }],
+  "keyFindings": "<2-3 sentence summary, max 500 chars>",
+  "analysedAt": "${new Date().toISOString()}"
+}
+
+Rules:
+- Reference actual angle values from the data
+- Maximum 5 issues (critical first), 3 strengths
+- overallScore: 8-10 excellent, 6-7 good, 4-5 needs work, 0-3 significant issues
+- If kinetic chain gain < 60%, flag as a timing/sequencing issue
+- Respond with ONLY the JSON object, no markdown`;
+}
 /**
  * Builds the extraction prompt for the LLM Parse Website agent — a search for one
  * real coaching tip targeting the diagnosed stroke fault.

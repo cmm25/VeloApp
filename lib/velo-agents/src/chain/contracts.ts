@@ -1,7 +1,8 @@
 import { ethers } from "ethers";
 import { ORCHESTRATOR_ABI, AGENT_REGISTRY_ABI, BOUNTY_EXTENSION_ABI, type ReceiptStruct } from "./abi.js";
-import { config } from "../utils/config.js";
+import { config, externalModelConfigured } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
+import { skillHash } from "./job-spec.js";
 
 const log = makeLogger("contracts");
 
@@ -46,6 +47,11 @@ export function getFormAgentWallet(): ethers.Wallet {
 export function getPrescriberWallet(): ethers.Wallet {
   if (!config.agents.prescriberPrivateKey) throw new Error("AGENT_PRESCRIBER_PRIVATE_KEY not set");
   return new ethers.Wallet(config.agents.prescriberPrivateKey, getProvider());
+}
+
+export function getExternalAgentWallet(): ethers.Wallet {
+  if (!config.externalModel.privateKey) throw new Error("AGENT_EXTERNAL_PRIVATE_KEY not set");
+  return new ethers.Wallet(config.externalModel.privateKey, getProvider());
 }
 
 export async function fetchNonce(agentAddress: string): Promise<bigint> {
@@ -177,12 +183,29 @@ export async function settleWithSplitsTx(
 //
 // Both agents also carry "velo.v1" so they can be found as a pair.
 
-import { keccak256, toUtf8Bytes } from "ethers";
+const skill = (s: string): string => skillHash(s);
 
-const skill = (s: string): string => keccak256(toUtf8Bytes(s));
+// Form agent's PRIMARY vision skill — used both for registration and for
+// self-filtering direct jobs (a job whose decoded skill equals this, or has no
+// skill at all, is handled by the Form agent).
+const FORM_PRIMARY_SKILL = skill("vision.pose");
 
-const FORM_SKILLS     = [skill("vision.pose"),        skill("velo.v1")];
-const PRESCRIBER_SKILLS = [skill("coaching.tactics"), skill("velo.v1")];
+const FORM_SKILLS       = [FORM_PRIMARY_SKILL,          skill("velo.v1")];
+const PRESCRIBER_SKILLS = [skill("coaching.tactics"),  skill("velo.v1")];
+
+/** bytes32 skill hash advertised by the external model agent (config-driven). */
+export function externalModelSkillHash(): string {
+  return skill(config.externalModel.skill);
+}
+
+/**
+ * Direct-job routing for the Form agent: it handles a job when no model was
+ * selected (legacy/default) or when the coach explicitly picked the pose model.
+ */
+export function formHandlesSkill(jobSkill: string | null): boolean {
+  if (jobSkill === null) return true;
+  return jobSkill.toLowerCase() === FORM_PRIMARY_SKILL.toLowerCase();
+}
 
 export async function registerAgentsOnChain(apiBase: string): Promise<void> {
   if (!config.contracts.agentRegistry) {
@@ -213,6 +236,21 @@ export async function registerAgentsOnChain(apiBase: string): Promise<void> {
     feeWei:    0n,
     agentType: "Prescriber",
   });
+
+  // External model agent — only registered once its URL + dedicated key are set.
+  // Until then it advertises nothing on-chain, so the coach's picker only shows
+  // the Form (pose) model and existing behaviour is unchanged.
+  if (externalModelConfigured()) {
+    await _ensureRegistered({
+      wallet:    getExternalAgentWallet(),
+      reg,
+      name:      config.externalModel.name,
+      endpoint:  `${apiBase}/api/healthz`,
+      skills:    [externalModelSkillHash(), skill("velo.v1")],
+      feeWei:    0n,
+      agentType: "ExternalModel",
+    });
+  }
 }
 
 async function _ensureRegistered(opts: {
