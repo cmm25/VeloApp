@@ -1,5 +1,10 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 function required(key: string): string {
   const v = process.env[key];
   if (!v || v.trim() === "") {
@@ -89,6 +94,15 @@ export const config = {
     llmAgentId: optional("SOMNIA_LLM_AGENT_ID", ""),
     // JSON API Request agent — id 13174292974160097713 in the docs oracle example.
     jsonApiAgentId: optional("SOMNIA_JSON_API_AGENT_ID", "13174292974160097713"),
+    // LLM Parse Website agent — extracts a coaching tip from a real source URL
+    // (consensus-verified). Empty default: the verified-technique path activates
+    // only when this id is set, exactly like SOMNIA_LLM_AGENT_ID.
+    parseWebsiteAgentId: optional("SOMNIA_PARSE_WEBSITE_AGENT_ID", ""),
+    // Real, verified coaching source the parse-website agent reads from.
+    techniqueSourceUrl: optional(
+      "SOMNIA_TECHNIQUE_SOURCE_URL",
+      "https://www.usta.com/en/home/improve/tips-and-instruction.html"
+    ),
     // Deposit sizing: deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize.
     // subcommitteeSize MUST match the platform default (3) — the basic createRequest
     // uses that default, and the contract divides the reward pot by it.
