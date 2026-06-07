@@ -64,6 +64,14 @@ const JSON_API_AGENT_ABI = [
   "function request(string url, string jsonPath) returns (string)",
 ] as const;
 
+// LLM Parse Website agent — `ExtractString(key, description, options, prompt,
+// url, resolveUrl, numPages, confidenceThreshold)` scrapes a real URL and
+// returns one extracted string. Verified against the agent explorer + docs
+// (id 12875401142070969085, docs.somnia.network/agents/base-agents/llm-parse-website).
+const PARSE_WEBSITE_AGENT_ABI = [
+  "function ExtractString(string key, string description, string[] options, string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold) returns (string output)",
+] as const;
+
 // Mirrors ISomniaAgents.ResponseStatus
 enum ResponseStatus {
   None = 0,
@@ -112,6 +120,21 @@ export function nativeAgentsConfigured(): boolean {
     !!config.somniaAgents.relayAddress &&
     !!config.somniaAgents.llmAgentId &&
     config.somniaAgents.llmAgentId !== "0"
+  );
+}
+
+/**
+ * True when the LLM Parse Website path is configured. Mirrors
+ * `nativeAgentsConfigured` but keyed on the parse-website agent id, so the
+ * verified-technique reference stays inert until explicitly enabled.
+ */
+export function parseWebsiteConfigured(): boolean {
+  return (
+    config.somniaAgents.enabled &&
+    !!config.somniaAgents.contract &&
+    !!config.somniaAgents.relayAddress &&
+    !!config.somniaAgents.parseWebsiteAgentId &&
+    config.somniaAgents.parseWebsiteAgentId !== "0"
   );
 }
 
@@ -180,6 +203,31 @@ export async function runJsonApiRequest(
     [url, jsonPath]
   );
   return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string");
+}
+
+/**
+ * Run an LLM Parse Website request through Somnia's native agent (via the relay).
+ * Scrapes the given real source URL and extracts a single coaching tip, returning
+ * the consensus output plus its auditable receipt. Throws `SomniaAgentsUnavailable`
+ * on any timeout / unavailability so callers can skip the reference cleanly.
+ */
+export async function runParseWebsite(
+  prompt: string,
+  url: string,
+  signer: ethers.Wallet
+): Promise<SomniaAgentResult> {
+  if (!parseWebsiteConfigured()) {
+    throw new SomniaAgentsUnavailable(
+      "Somnia parse-website agent not configured (set SOMNIA_AGENT_RELAY_ADDRESS and SOMNIA_PARSE_WEBSITE_AGENT_ID)"
+    );
+  }
+  // resolveUrl=false scrapes the explicit source URL directly (skips the search
+  // layer); numPages=1; confidenceThreshold=60.
+  const payload = new ethers.Interface([...PARSE_WEBSITE_AGENT_ABI]).encodeFunctionData(
+    "ExtractString",
+    ["tip", "A concise, actionable tennis coaching tip", [], prompt, url, false, 1, 60]
+  );
+  return dispatchRequest(config.somniaAgents.parseWebsiteAgentId, payload, signer, "string");
 }
 
 // Core request lifecycle
