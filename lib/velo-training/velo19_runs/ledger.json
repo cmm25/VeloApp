@@ -1,0 +1,35 @@
+{
+  "runs": [
+    {
+      "name": "velo19_s_w100",
+      "config": {
+        "name": "velo19_s_w100",
+        "epochs": 100,
+        "weighted": true
+      },
+      "launched": true,
+      "launch_epoch": 1780781893.367491,
+      "launched_at": "2026-06-06 17:20",
+      "evaled": true,
+      "eval": {
+        "weights": "/Volumes/DevSSD/Projects/2026/VeloApp/lib/velo-training/velo19_runs/velo19_s_w100/best.pt",
+        "velo19_test": {
+          "pose_map50_95": 0.642,
+          "pose_map50": 0.9322,
+          "box_map50": 0.949
+        },
+        "hardval_body": {
+          "pose_map50_95": 0.1046,
+          "pose_map50": 0.1787,
+          "box_map50": 0.5847
+        },
+        "body_collapsed": true,
+        "ship_candidate": false
+      },
+      "app_id": "ap-v1s7si9diXOiM8yLAPknWN",
+      "launch_log": "manual: detached app ap-v1s7si9diXOiM8yLAPknWN confirmed running"
+    }
+  ],
+  "stopped": true,
+  "stop_reason": "velo19_s_w100 body-pose COLLAPSED (forgetting) \u2014 approach failed; keep coco17 (valid null result)."
+}
