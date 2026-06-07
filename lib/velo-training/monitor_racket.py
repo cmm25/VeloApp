@@ -60,11 +60,19 @@ def _spent_est(led):
 
 
 def _modal_running(env) -> bool:
+    # Use --json: the plain table truncates the description to "velo-pose-t…" so a text
+    # match silently fails and the monitor would false-fail the run at the grace window.
     try:
-        out = subprocess.run([MODAL, "app", "list"], capture_output=True, text=True, env=env, timeout=120).stdout
-        return any("velo-pose-train" in l and ("running" in l.lower() or "ephemeral" in l.lower()) for l in out.splitlines())
+        out = subprocess.run([MODAL, "app", "list", "--json"], capture_output=True, text=True, env=env, timeout=120).stdout
+        apps = json.loads(out[out.index("["): out.rindex("]") + 1])
+        for a in apps:
+            desc = (a.get("Description") or "").lower()
+            state = (a.get("State") or "").lower()
+            if "velo-pose-train" in desc and any(s in state for s in ("ephemeral", "running", "deploying")):
+                return True
+        return False
     except Exception:
-        return True  # uncertain → assume running → don't launch
+        return True  # uncertain → assume running → don't launch / don't false-fail
 
 
 def _eval_run(env, run) -> dict:

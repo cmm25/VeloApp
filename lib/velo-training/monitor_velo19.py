@@ -73,14 +73,18 @@ def _spent_est(led):
 
 
 def _modal_running(env) -> bool:
+    # --json: plain table truncates description ("velo-pose-t…") so a text match fails.
     try:
-        out = subprocess.run([MODAL, "app", "list"], capture_output=True, text=True, env=env, timeout=120).stdout
-        for line in out.splitlines():
-            if "velo-pose-train" in line and ("running" in line.lower() or "ephemeral" in line.lower()):
+        out = subprocess.run([MODAL, "app", "list", "--json"], capture_output=True, text=True, env=env, timeout=120).stdout
+        apps = json.loads(out[out.index("["): out.rindex("]") + 1])
+        for a in apps:
+            desc = (a.get("Description") or "").lower()
+            state = (a.get("State") or "").lower()
+            if "velo-pose-train" in desc and any(s in state for s in ("ephemeral", "running", "deploying")):
                 return True
+        return False
     except Exception:
         return True  # uncertain → assume running → don't launch (fail-safe)
-    return False
 
 
 def _eval_run(env, run) -> dict:
