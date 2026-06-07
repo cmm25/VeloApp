@@ -185,17 +185,19 @@ try:
         # Add `secrets=[modal.Secret.from_name("roboflow")]` to prep data in-cloud.
     )
     def train_modal(epochs: int = 100, batch: int = 16, baseline: bool = False,
-                    dataset: str = "velo19", weighted: bool = True, name: str = "velo19"):
+                    dataset: str = "velo19", weighted: bool = True, name: str = "velo19",
+                    imgsz: int = 640):
         # Expects the dataset synced to the volume at /vol/<dataset>.
         # (Upload locally: `modal volume put velo-pose-data data/velo19 /velo19`.)
         data_yaml = _modal_data_yaml(f"/vol/{dataset}")
         if epochs == 100:
-            train_two_stage(data_yaml=data_yaml, batch=batch, project="/vol/runs",
+            train_two_stage(data_yaml=data_yaml, imgsz=imgsz, batch=batch, project="/vol/runs",
                             run_baseline=baseline, use_weighted_loss=weighted, name=name)
         else:
             train_core(
                 data_yaml=data_yaml,
                 epochs=epochs,
+                imgsz=imgsz,
                 batch=batch,
                 project="/vol/runs",
                 name=name,
@@ -206,9 +208,10 @@ try:
 
     @app.local_entrypoint()
     def main(epochs: int = 100, batch: int = 16, baseline: bool = False,
-             dataset: str = "velo19", weighted: bool = True, name: str = "velo19"):
+             dataset: str = "velo19", weighted: bool = True, name: str = "velo19",
+             imgsz: int = 640):
         train_modal.remote(epochs=epochs, batch=batch, baseline=baseline,
-                           dataset=dataset, weighted=weighted, name=name)
+                           dataset=dataset, weighted=weighted, name=name, imgsz=imgsz)
 
 except ImportError:
     pass  # modal not installed — local CLI below still works
