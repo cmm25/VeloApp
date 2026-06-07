@@ -43,6 +43,11 @@ export const TennisTelemetrySchema = z.object({
   analysisNotes: z.string().optional(),
   isMock: z.boolean().default(false),
 
+  // Deterministic engine commitment ("sha256:<64hex>"). Carried THROUGH to the IPFS-pinned
+  // report so the on-chain summaryHash = keccak256(report) transitively commits it — no
+  // contract change. Optional: absent on mock/v1 payloads. (Closes R2.)
+  telemetryHash: z.string().nullish(),
+
   // ── v2 honesty signals (all OPTIONAL — grafted from engine.summary/aggregate/engine;
   // absent on mock/v1 payloads). Never make these required or the live path breaks. ──
   velocityScaleSource: z

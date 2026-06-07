@@ -21,6 +21,9 @@ export function normalizeTelemetry(raw: unknown): TennisTelemetry {
   const flat: Record<string, unknown> = {
     ...summary,
     isMock: camel.isMock ?? summary.isMock ?? false,
+    // Deterministic engine commitment — kept (NOT dropped) so it rides into the IPFS-pinned
+    // report and the on-chain summaryHash commits it. Top-level on the engine payload. (R2 fix.)
+    telemetryHash: camel.telemetryHash,
     // Grafted v2 honesty signals (schema marks each optional/nullish).
     velocityScaleSource: engine.velocityScaleSource,
     timingGranularityMs: engine.timingGranularityMs,
