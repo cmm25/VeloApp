@@ -16,6 +16,7 @@ import {
   buildBountyReceipt,
   signBountyReceipt,
 } from "../chain/eip712.js";
+import { decodeJobSpec } from "../chain/job-spec.js";
 import { upsertReceipt } from "../api/store.js";
 import type { BountyAcceptedEvent } from "../chain/abi.js";
 
@@ -41,7 +42,11 @@ const log = makeLogger("bounty-agent");
  *   8. Store in receipt store for API
  */
 export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<void> {
-  const { bountyId, leadAgent, videoCid, athlete, deadline } = event;
+  const { bountyId, leadAgent, videoCid: rawVideoCid, athlete, deadline } = event;
+  // Bounties route by on-chain `requiredSkills`, so their videoCid is always the
+  // raw cid. Decode defensively anyway so an encoded cid never reaches the
+  // gateway resolver.
+  const { videoCid } = decodeJobSpec(rawVideoCid);
   log.info("Handling BountyAccepted", { bountyId: bountyId.toString(), leadAgent, videoCid });
 
   const wallet = getFormAgentWallet();
