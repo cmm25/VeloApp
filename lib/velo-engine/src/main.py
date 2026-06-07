@@ -135,3 +135,87 @@ async def analyze(req: AnalyzeRequest):
         if tmp_path and os.path.exists(tmp_path):
             os.unlink(tmp_path)
             log.debug(f"Cleaned up temp file: {tmp_path}")
+
+
+def _to_external_output(t: TennisTelemetry) -> dict:
+    """Flatten v2 TennisTelemetry → the simple ExternalModelOutput shape the
+    Velo external-model agent validates: {aspect, metrics, observations,
+    confidence, notes}. Lets the 'Serve / External' model in the coach's
+    direct-hire picker be backed by THIS engine (resolves the contract mismatch:
+    the external agent's Zod record rejects nulls, so metrics is all-numeric and
+    null fields are dropped). The deterministic telemetryHash is carried in notes.
+    """
+    agg = t.aggregate
+    metrics: dict[str, float] = {}
+
+    def put(key: str, val) -> None:
+        if val is not None:
+            metrics[key] = round(float(val), 4)
+
+    put("stroke_count", agg.stroke_count)
+    put("consistency_score", agg.consistency_score)
+    put("peak_proximal_to_distal_gain", agg.peak_proximal_to_distal_gain)
+    put("peak_shoulder_deg", agg.peak_angles.shoulder)
+    put("peak_elbow_deg", agg.peak_angles.elbow)
+    put("peak_hip_deg", agg.peak_angles.hip)
+    put("peak_knee_deg", agg.peak_angles.knee)
+    put("mean_keypoint_confidence", t.quality.mean_keypoint_confidence)
+    vels = [s.peak_wrist_velocity_tl_per_s for s in t.strokes if s.peak_wrist_velocity_tl_per_s is not None]
+    if vels:
+        put("peak_wrist_velocity_tl_per_s", max(vels))
+
+    obs: list[str] = []
+    if t.analysis_notes:
+        obs.append(t.analysis_notes[:500])
+    if any(s.kinetic_chain and s.kinetic_chain.timing_resolvable is False for s in t.strokes):
+        obs.append("Stroke timing is unresolved at this frame rate — chain quality is reported via proximal→distal speed-gain, not millisecond ordering.")
+    if agg.peak_angles.wrist_is_proxy:
+        obs.append("Wrist angle is a forearm-orientation proxy (no racket keypoints yet).")
+    obs.append(f"Velocities are relative ({t.engine.velocity_scale_source}); not metric mph.")
+
+    confidence = max(0.0, min(1.0, float(t.quality.mean_keypoint_confidence)))
+    notes = (
+        f"telemetryHash={t.telemetry_hash}; backbone={t.engine.backbone}; "
+        f"deterministic on the pinned engine image."
+    )[:1000]
+    return {
+        "aspect": str(agg.dominant_stroke),
+        "metrics": metrics,
+        "observations": obs[:20],
+        "confidence": confidence,
+        "notes": notes,
+    }
+
+
+@app.post("/analyze-external")
+async def analyze_external(req: AnalyzeRequest):
+    """Adapter for the external-model agent (the coach's 'Serve / External' model).
+
+    Runs the SAME analysis as /analyze, but returns the flat
+    {aspect, metrics, observations, confidence, notes} contract the external agent
+    expects — so this one engine can back BOTH models in the direct-hire picker.
+    """
+    log.info(f"Analyze-external request: url={req.video_url[:80]}… cid={req.video_cid}")
+    if not req.video_url:
+        raise HTTPException(status_code=400, detail="video_url is required")
+
+    tmp_path = None
+    try:
+        tmp_path = await download_video(req.video_url, max_duration_s=req.max_duration_s)
+        analyzer = get_analyzer()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: analyzer.analyze_file(tmp_path, req.video_url, req.sample_rate, req.max_duration_s, req),
+        )
+        return JSONResponse(_to_external_output(result))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        log.error(f"Analyze-external failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Analysis error: {str(e)}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
