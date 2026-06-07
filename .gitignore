@@ -79,3 +79,10 @@ runs/
 lib/velo-engine/overlays/
 lib/velo-engine/custom_models/*
 !lib/velo-engine/custom_models/.gitkeep
+
+# ── Local planning docs + verification scratch (kept local, not committed) ─────
+.claude/
+docs/VELO-INTEGRATION-PLAN.md
+docs/VELO-ONCHAIN-HASH-MIGRATION.md
+docs/HANDOFF_external_ai_models*.md
+lib/velo-agents/verify_*.ts
