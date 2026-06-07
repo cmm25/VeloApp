@@ -1,92 +1,124 @@
-# Velo — Smart Contracts
+# Hardhat — Smart Contracts
 
-The on-chain infrastructure for Velo, deployed on Somnia (chain ID 50312). Six Solidity contracts handle the full lifecycle of an AI coaching session: payment, escrow, cryptographic receipt verification, athlete history, agent identity, and open bounties.
+On-chain infrastructure for Velo on Somnia (chain ID 50312). These contracts define job lifecycle, payment escrow, receipt verification, athlete history, agent identity, reputation, and the open bounty marketplace.
+
+---
+
+## What this folder contains
+
+| Area | Location | Purpose |
+|------|----------|---------|
+| **Contracts** | `contracts/` | All deployed Solidity — orchestrator, registries, SBT, bounties, relay |
+| **Interfaces** | `contracts/interfaces/` | Public ABIs consumed by other contracts |
+| **Abstract bases** | `contracts/abstract/` | Shared behaviour — escrow, receipt storage, registry checks, soulbound logic |
+| **Libraries** | `contracts/libraries/` | Receipt hashing and job ID derivation |
+| **Mocks** | `contracts/mocks/` | Test doubles for local runs |
+| **Tests** | `test/` | Full lifecycle and edge-case coverage on Hardhat's simulated network |
+| **Config** | `hardhat.config.ts` | Networks, compiler settings, account loading |
+
+Deploy and utility scripts live under `scripts/` (invoked via npm scripts below).
+
+---
+
+## Contracts at a glance
+
+```mermaid
+flowchart TB
+  Coach["Coach wallet"]
+  Orch["VeloOrchestrator"]
+  Escrow["JobEscrow — inside Orchestrator"]
+  SBT["AthleteSBT"]
+  AR["AgentRegistry"]
+  CR["CoachRegistry"]
+  Rep["Reputation"]
+  Bounty["BountyExtension"]
+  Relay["VeloAgentRelay"]
+
+  Coach -->|"payJob"| Orch
+  Orch --> Escrow
+  Orch --> AR
+  Orch --> SBT
+  Orch --> Rep
+  Bounty --> AR
+  Bounty --> Rep
+  Relay -.->|"captures Somnia LLM callbacks"| Agents["velo-agents"]
+```
+
+| Contract | Role |
+|----------|------|
+| **VeloOrchestrator** | Central entry point — coaches pay for jobs, agents submit receipts, escrow settles |
+| **AthleteSBT** | Non-transferable token per athlete; session receipts append to a permanent history |
+| **AgentRegistry** | Public directory of agent wallets, skills, fees, and endpoints |
+| **CoachRegistry** | On-chain list of coach wallets for role separation |
+| **Reputation** | Scorebook updated after completed jobs; writable only by trusted Velo contracts |
+| **BountyExtension** | Open marketplace — post tasks, bid, accept, settle on-chain |
+| **VeloAgentRelay** | Receives Somnia native LLM inference callbacks so the agent runner can read results |
 
 ---
 
 ## How a session works
 
-A coach calls `payJob` on the Orchestrator, locking the fee in escrow and emitting an event. The agent runner picks up that event, does its work, and submits two EIP-712 signed receipts back on-chain — one from the Form Agent, one from the Prescriber. The Orchestrator verifies the signatures, releases the escrowed fee to the agents via a pull-payment mechanism (agents call `withdraw`), and appends the session to the athlete's Soulbound Token. The whole flow is trustless: no one can fake a receipt without the registered agent's private key.
+1. Coach calls `payJob` — fee locks in escrow, `JobRequested` event fires.
+2. Form agent submits a signed EIP-712 form receipt — `FormReceiptSubmitted` event fires.
+3. Prescriber agent submits a signed prescription receipt chained to the form receipt.
+4. Orchestrator verifies signatures against the AgentRegistry, releases escrow (agents withdraw via pull payment), and appends the session to the athlete's SBT.
 
----
-
-## Contracts
-
-### VeloOrchestrator
-
-The central contract that every other piece of the system talks to. A coach calls it to start a session, the agents call it to submit their signed results, and it calls the escrow to release payment and the SBT to record the outcome. It knows which agent wallets are authorised to submit receipts by checking the AgentRegistry.
-
-### AthleteSBT
-
-A non-transferable NFT (Soulbound Token). Every athlete gets one token that persists across all their sessions and all their coaches. Each time a session completes, a receipt reference is appended to the token. The token is the athlete's permanent, portable coaching history — it cannot be transferred or burned by anyone except the contract itself.
-
-### AgentRegistry
-
-A public directory of AI agent wallets. Agents register their wallet address, profile metadata (name, skills, endpoint URL, fee), and an active/inactive flag. The Orchestrator checks this registry to verify that a receipt was signed by an authorised agent before accepting it.
-
-### CoachRegistry
-
-A simple list of coach wallet addresses. Keeps the distinction between coach and athlete roles explicit on-chain, which matters for access control in the Orchestrator and for the bounty marketplace.
-
-### Reputation
-
-A scorebook updated by the Orchestrator and BountyExtension contracts after each completed job. Agents accumulate a reputation score over time based on successful completions. External contracts can read it, but only trusted Velo contracts can write to it, so scores cannot be gamed.
-
-### BountyExtension
-
-An open marketplace where anyone can post a task (a bounty) with a video and a reward. Agents browse open bounties, bid on them, and the poster accepts one bid. The agent then completes the work and submits a receipt; the contract verifies it and releases the reward. The full lifecycle — post, bid, accept, settle — happens on-chain.
-
----
-
-## Deployment
-
-Running `npm run deploy:somnia` deploys all six contracts in the correct dependency order, wires up the access-control roles between them automatically, and writes all the resulting addresses to `deployments/somniaTestnet.json`. The agent runner and the frontend both read that file at startup.
-
-The deploy script is idempotent in the sense that it checks dependencies before redeploying, but changing any `immutable` constructor argument (such as fee parameters) requires a fresh deploy of that contract.
-
-After deploying, run `npm run register:somnia` to register the two agent wallets in the AgentRegistry on-chain. The Orchestrator will not accept receipts from wallets that are not registered.
+Receipts are signed off-chain; only the submit transactions touch the chain.
 
 ---
 
 ## Networks
 
-| Name | Chain ID | Purpose |
-|------|----------|---------|
-| `hardhat` | 31337 | Local tests — built-in simulated network, no node required |
-| `localhost` | 31337 | Attach to a running `npx hardhat node` instance |
-| `somniaTestnet` | 50312 | Live testnet — the only network used for real deploys |
+| Name | Chain ID | Use |
+|------|----------|-----|
+| `hardhat` | 31337 | Local tests — built-in simulated network |
+| `localhost` | 31337 | Attach to a running `hardhat node` |
+| `somniaTestnet` | 50312 | Live testnet deploys |
 
-Somnia testnet endpoints:
-- RPC: `https://dream-rpc.somnia.network`
-- Explorer: `https://shannon-explorer.somnia.network`
-- Faucet: Google Cloud Web3 Somnia Shannon faucet
+Somnia testnet RPC: `https://dream-rpc.somnia.network`
 
 ---
 
-## Testing
+## Common commands
 
-The test suite runs entirely against Hardhat's built-in simulated network. No external node, no real tokens, no gas fees. Tests cover the full happy path as well as edge cases like expired deadlines, wrong agent signatures, and double-submission attempts.
+| Command | What it does |
+|---------|--------------|
+| `npm run compile` | Compile all contracts |
+| `npm run test` | Run the test suite locally |
+| `npm run deploy:somnia` | Deploy to Somnia testnet and write `deployments/somniaTestnet.json` |
+| `npm run register:somnia` | Register Form and Prescriber agent wallets in AgentRegistry |
 
----
+Copy `.env.example` to `.env` and set deployer and agent private keys before deploying. Never commit `.env`.
 
-## Setup
-
-Copy `.env.example` to `.env` and fill in `DEPLOYER_PRIVATE_KEY`, `AGENT_FORM_PRIVATE_KEY`, and `AGENT_PRESCRIBER_PRIVATE_KEY`. For a quick demo a single funded wallet can play every role. Never commit `.env`.
-
----
-
-## Key design decisions
-
-**Pull payment** — agents call `withdraw()` to collect their fee rather than having it pushed to them. This avoids reentrancy risk and gas estimating complexity on the Orchestrator side.
-
-**EIP-712 receipts** — off-chain signing means agents never need to send an on-chain transaction to produce a receipt; they just sign a typed message. Only the final `submitFormReceipt` and `submitPrescription` calls touch the chain.
-
-**Soulbound history** — the SBT is owned by the athlete, not the coach. A coach cannot delete or modify an athlete's history. When an athlete moves to a new coach, their full history comes with them.
-
-**deployments/ is auto-generated** — do not edit `deployments/somniaTestnet.json` by hand. The deploy script writes it; the runner and frontend read it.
+After deploy, run `register:somnia` so the Orchestrator accepts receipts from your agent wallets.
 
 ---
 
-## License
+## Design choices
 
-MIT — SPDX identifiers are in each contract file.
+| Decision | Why |
+|----------|-----|
+| **Pull payment** | Agents call `withdraw()` — avoids reentrancy and gas estimation on the Orchestrator |
+| **EIP-712 receipts** | Agents sign typed messages off-chain; only submission is an on-chain transaction |
+| **Soulbound history** | Athletes own their record; coaches cannot alter or delete it |
+| **Composable agents** | Form and prescription are separate receipt types with explicit chaining via `priorReceiptHash` |
+
+---
+
+## How this connects to the rest of Velo
+
+```mermaid
+flowchart LR
+  Hardhat["Hardhat contracts"]
+  Deploy["deployments/somniaTestnet.json"]
+  Web["Velo web app"]
+  Agents["velo-agents"]
+
+  Hardhat -->|"deploy writes"| Deploy
+  Deploy --> Web
+  Deploy --> Agents
+  Web -->|"payJob, reads"| Hardhat
+  Agents -->|"watch events, submit receipts"| Hardhat
+```
+
+Contracts are the source of truth for job state, payments, and receipt validity. The web app sends transactions and reads state; the agent runner reacts to events and submits signed results. Neither layer can bypass on-chain verification.

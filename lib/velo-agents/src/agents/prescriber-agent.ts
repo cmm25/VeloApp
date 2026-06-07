@@ -3,8 +3,9 @@ import { makeLogger } from "../utils/logger.js";
 import { withRetry } from "../utils/retry.js";
 import { pinJson } from "../ipfs/pinata.js";
 import { reason } from "../ai/dispatch.js";
-import { buildPrescriptionPrompt } from "../ai/prompts.js";
-import { PrescriptionReportSchema, FormReportSchema } from "../ai/schemas.js";
+import { runParseWebsite, parseWebsiteConfigured } from "../ai/somnia-agents.js";
+import { buildPrescriptionPrompt, buildTechniqueQueryPrompt } from "../ai/prompts.js";
+import { PrescriptionReportSchema, FormReportSchema, type TechniqueReference } from "../ai/schemas.js";
 import {
   getPrescriberWallet,
   fetchNonce,
@@ -93,6 +94,33 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         somniaRequestId: provenance.somnia?.requestId,
       });
 
+      // Ground the prescription in a real, consensus-verified coaching source via
+      // Somnia's LLM Parse Website agent. Best-effort — any failure is logged and
+      // skipped so it never blocks settlement.
+      let techniqueReference: TechniqueReference | undefined;
+      if (parseWebsiteConfigured()) {
+        const sourceUrl = config.somniaAgents.techniqueSourceUrl;
+        try {
+          const ref = await runParseWebsite(
+            buildTechniqueQueryPrompt(parsedFormReport),
+            sourceUrl,
+            wallet
+          );
+          const tip = ref.output.trim();
+          if (tip) {
+            techniqueReference = { tip, sourceUrl, somnia: ref.receipt };
+            log.info("Technique reference attached", {
+              requestId: ref.receipt.requestId,
+              sourceUrl,
+            });
+          }
+        } catch (err) {
+          log.warn("Technique reference skipped", {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       // 5. Pin prescription to IPFS
       const prescriptionPayload = {
         type: "velo/prescription/v1",
@@ -104,6 +132,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         },
         prescriptionReport,
         provenance,
+        techniqueReference,
       };
       const { cid: ipfsCid } = await pinJson(
         prescriptionPayload,
@@ -166,6 +195,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
           blockNumber: txReceipt.blockNumber.toString(),
           report: prescriptionReport,
           provenance,
+          techniqueReference,
         },
       });
     },
