@@ -9,6 +9,7 @@ import { PrescriptionReportSchema, FormReportSchema, type TechniqueReference } f
 import {
   getPrescriberWallet,
   fetchNonce,
+  fetchJob,
   fetchFormReceipt,
   submitPrescriptionTx,
 } from "../chain/contracts.js";
@@ -18,7 +19,7 @@ import {
   signReceipt,
 } from "../chain/eip712.js";
 import { upsertReceipt, getReceipt } from "../api/store.js";
-import type { FormReceiptEvent } from "../chain/abi.js";
+import { JobStatus, type FormReceiptEvent } from "../chain/abi.js";
 
 const log = makeLogger("prescriber-agent");
 
@@ -49,6 +50,18 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
 
   await withRetry(
     async () => {
+      // FIX D: replay guard. A restart re-emits FormReceiptSubmitted for jobs already
+      // completed → submitPrescription reverts with JobNotFormSubmitted(). Skip unless
+      // the job is still awaiting its prescription.
+      const job = await fetchJob(jobId);
+      if (job.status !== JobStatus.FormSubmitted) {
+        log.info("Job not in FormSubmitted state — skipping prescription (already processed)", {
+          jobId,
+          status: job.status,
+        });
+        return;
+      }
+
       // 1. Read form receipt ON-CHAIN — this is the cryptographic proof of reading
       const formReceipt = await fetchFormReceipt(jobId);
       log.info("Form receipt read from chain", {

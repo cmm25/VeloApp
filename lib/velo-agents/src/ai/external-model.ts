@@ -32,15 +32,12 @@ export async function callExternalModel(
     headers.Authorization = `Bearer ${config.externalModel.apiKey}`;
   }
 
-  // EXTERNAL_MODEL_URL is configured as a base host (mirroring ENGINE_URL), so
-  // the analysis route is appended here exactly like the vision-engine client.
-  // Tolerate a trailing slash or a URL that already includes the route.
-  const base = url.replace(/\/+$/, "");
-  const endpoint = base.endsWith("/analyze") ? base : `${base}/analyze`;
-
+  // EXTERNAL_MODEL_URL is the full analysis endpoint (e.g. .../analyze-external,
+  // the engine's flat adapter route). POST to it directly — appending a route
+  // here would hit .../analyze-external/analyze → 404 and the wrong shape.
   const res = await withRetry(
     () =>
-      fetch(endpoint, {
+      fetch(url, {
         method: "POST",
         headers,
         body: JSON.stringify({ videoUrl, videoCid }),

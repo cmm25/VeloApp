@@ -10,6 +10,7 @@ import { FormReportSchema, TennisTelemetrySchema, type TennisTelemetry } from ".
 import {
   getFormAgentWallet,
   fetchNonce,
+  fetchJob,
   submitFormReceiptTx,
   formHandlesSkill,
 } from "../chain/contracts.js";
@@ -19,7 +20,7 @@ import {
 } from "../chain/eip712.js";
 import { decodeJobSpec } from "../chain/job-spec.js";
 import { upsertReceipt } from "../api/store.js";
-import type { JobEvent } from "../chain/abi.js";
+import { JobStatus, type JobEvent } from "../chain/abi.js";
 
 const log = makeLogger("form-agent");
 
@@ -58,6 +59,18 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
 
   await withRetry(
     async () => {
+      // FIX D: replay guard. After a restart the watcher re-scans old blocks and
+      // re-emits JobRequested for jobs already settled → submitFormReceipt reverts
+      // with JobNotRequested(). Skip unless the job is still awaiting a form receipt.
+      const job = await fetchJob(jobId);
+      if (job.status !== JobStatus.Requested) {
+        log.info("Job no longer in Requested state — skipping (already processed)", {
+          jobId,
+          status: job.status,
+        });
+        return;
+      }
+
       // 1. Resolve video URL
       const videoUrl = resolveVideoUrl(videoCid);
       if (!videoUrl) {
