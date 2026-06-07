@@ -56,7 +56,8 @@ export const config = {
   // them the agent registers nothing, the picker only offers the Form model,
   // and the existing pipeline is unchanged.
   externalModel: {
-    // The model's HTTP endpoint. POSTed { videoUrl, videoCid } → JSON.
+    // The model's base host. The agent appends /analyze and POSTs
+    // { videoUrl, videoCid } → JSON (same convention as ENGINE_URL).
     url: optional("EXTERNAL_MODEL_URL", ""),
     // Optional bearer token sent as Authorization to the model endpoint.
     apiKey: optional("EXTERNAL_MODEL_API_KEY", ""),
