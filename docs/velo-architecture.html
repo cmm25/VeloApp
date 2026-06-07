@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Velo — Architecture & Workflow</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#121a30; --panel2:#0f1730; --ink:#e8edf7; --muted:#9aa7c2;
+    --line:#28324f; --accent:#5ee0a0; --blue:#5b9dff; --violet:#b08bff;
+    --green:#5ee0a0; --amber2:#ffce6b; --chip:#1b2745;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:linear-gradient(180deg,#0b1020,#0c1226 40%,#0b1020);color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;padding:0 0 80px}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 24px}
+  header.hero{background:radial-gradient(1200px 300px at 20% -10%,rgba(94,224,160,.18),transparent),
+    linear-gradient(120deg,#10203f,#16113a);border-bottom:1px solid var(--line);padding:46px 0 38px;margin-bottom:34px}
+  .badge{display:inline-flex;align-items:center;gap:7px;background:rgba(94,224,160,.12);color:var(--green);
+    border:1px solid rgba(94,224,160,.35);padding:5px 12px;border-radius:999px;font-size:12.5px;font-weight:600;letter-spacing:.2px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(94,224,160,.18)}
+  h1{font-size:34px;margin:16px 0 6px;letter-spacing:-.5px}
+  .sub{color:var(--muted);font-size:16px;max-width:760px}
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:26px}
+  .fact{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+  .fact .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  .fact .v{font-size:15px;font-weight:600;margin-top:4px;word-break:break-word}
+  .fact .v.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px}
+  section{margin:38px 0}
+  h2{font-size:20px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+  h2 .num{display:inline-grid;place-items:center;width:26px;height:26px;border-radius:8px;background:var(--chip);
+    color:var(--accent);font-size:13px;border:1px solid var(--line)}
+  .lead{color:var(--muted);margin:0 0 18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px}
+  /* layered architecture */
+  .layer{display:flex;align-items:center;gap:14px;margin:0 0 12px}
+  .layer .tag{flex:0 0 120px;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px;text-align:right}
+  .nodes{flex:1;display:flex;gap:12px;flex-wrap:wrap}
+  .node{flex:1;min-width:150px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .node b{display:block;font-size:14px}
+  .node small{color:var(--muted);font-size:12px}
+  .node.k-chain{border-color:rgba(91,157,255,.4)}
+  .node.k-engine{border-color:rgba(94,224,160,.45)}
+  .node.k-agent{border-color:rgba(176,139,255,.4)}
+  .node.k-ext{border-color:rgba(255,206,107,.4)}
+  .vsep{height:18px;display:flex;justify-content:center;color:var(--line)}
+  .vsep svg{opacity:.7}
+  /* workflow steps */
+  .flow{display:grid;gap:0}
+  .step{display:grid;grid-template-columns:42px 1fr;gap:16px;position:relative;padding:0 0 22px}
+  .step:last-child{padding-bottom:0}
+  .step .idx{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;font-weight:700;
+    background:var(--chip);border:1px solid var(--line);color:var(--accent);z-index:1}
+  .step:not(:last-child)::before{content:"";position:absolute;left:21px;top:42px;bottom:-2px;width:2px;background:var(--line)}
+  .step .body b{font-size:15px}
+  .step .body p{margin:3px 0 0;color:var(--muted);font-size:13.5px}
+  .step .who{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:8px;vertical-align:middle}
+  .who.chain{background:rgba(91,157,255,.14);color:var(--blue)}
+  .who.engine{background:rgba(94,224,160,.14);color:var(--green)}
+  .who.agent{background:rgba(176,139,255,.14);color:var(--violet)}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--chip);padding:1px 6px;border-radius:6px;font-size:12.5px;color:#cfe0ff}
+  /* pipeline */
+  .pipe{display:flex;align-items:stretch;gap:0;flex-wrap:wrap}
+  .pstep{flex:1;min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:12px;position:relative;margin:6px}
+  .pstep b{font-size:13px;display:block}
+  .pstep small{color:var(--muted);font-size:11.5px}
+  .arrow{align-self:center;color:var(--accent);font-size:20px;padding:0 2px}
+  /* two-col */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel-sm{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .panel-sm h3{margin:0 0 8px;font-size:14px;letter-spacing:.3px}
+  ul.tight{margin:6px 0 0;padding-left:18px;color:var(--muted);font-size:13.5px}
+  ul.tight li{margin:4px 0}
+  .pill{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:999px;margin:0 4px 6px 0}
+  .pill.ok{background:rgba(94,224,160,.14);color:var(--green);border:1px solid rgba(94,224,160,.3)}
+  .pill.wait{background:rgba(255,206,107,.14);color:var(--amber2);border:1px solid rgba(255,206,107,.3)}
+  .pill.todo{background:rgba(91,157,255,.12);color:var(--blue);border:1px solid rgba(91,157,255,.3)}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.5px}
+  td.mono{font-size:12.5px;color:#cfe0ff}
+  footer{color:var(--muted);font-size:12.5px;text-align:center;margin-top:40px;border-top:1px solid var(--line);padding-top:20px}
+  @media(max-width:760px){.facts{grid-template-columns:1fr 1fr}.grid2{grid-template-columns:1fr}.layer{flex-direction:column;align-items:stretch}.layer .tag{text-align:left;flex:none}}
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <span class="badge"><span class="dot"></span> Vision Engine — LIVE on Koyeb</span>
+    <h1>Velo — Architecture &amp; Workflow</h1>
+    <p class="sub">How a coach's video becomes a deterministic, on-chain-verifiable tennis analysis. Three planes — the chain, the agent runner, and the vision engine — connected by one job lifecycle.</p>
+    <div class="facts">
+      <div class="fact"><div class="k">Engine URL</div><div class="v mono">velo-engine-theportal-3b21b963.koyeb.app</div></div>
+      <div class="fact"><div class="k">Determinism</div><div class="v">Byte-identical hash (amd64)</div></div>
+      <div class="fact"><div class="k">Latency</div><div class="v">~15s / 10s clip · &lt;120s budget</div></div>
+      <div class="fact"><div class="k">Model</div><div class="v">YOLO11-pose · body (17 kpts)</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 1. ARCHITECTURE -->
+  <section>
+    <h2><span class="num">1</span> System architecture</h2>
+    <p class="lead">Five planes. The user acts in the browser; the chain is the source of truth; the runner orchestrates AI; the engine measures the video; IPFS + an LLM provide storage and language.</p>
+    <div class="card">
+      <div class="layer">
+        <div class="tag">User</div>
+        <div class="nodes"><div class="node"><b>Web app (Vercel)</b><small>Coach posts a job · athlete &amp; coach dashboards · reads on-chain receipts</small></div></div>
+      </div>
+      <div class="vsep">↓</div>
+      <div class="layer">
+        <div class="tag">Chain · Somnia L1</div>
+        <div class="nodes">
+          <div class="node k-chain"><b>VeloOrchestrator</b><small>jobs + form/prescription receipts (EIP-712)</small></div>
+          <div class="node k-chain"><b>AgentRegistry</b><small>which agents may submit</small></div>
+          <div class="node k-chain"><b>BountyExtension</b><small>escrow + settlement splits</small></div>
+          <div class="node k-chain"><b>AthleteSBT</b><small>soulbound receipt history</small></div>
+        </div>
+      </div>
+      <div class="vsep">↓</div>
+      <div class="layer">
+        <div class="tag">Agent Runner</div>
+        <div class="nodes">
+          <div class="node k-agent"><b>Form Agent</b><small>watches JobRequested → telemetry → FormReport → receipt</small></div>
+          <div class="node k-agent"><b>Prescriber Agent</b><small>FormReport → drills → prescription receipt</small></div>
+          <div class="node k-agent"><b>Bounty Agent</b><small>multi-agent bounty settlement</small></div>
+        </div>
+      </div>
+      <div class="vsep">↓</div>
+      <div class="layer">
+        <div class="tag">Compute / Data</div>
+        <div class="nodes">
+          <div class="node k-engine"><b>Vision Engine (Koyeb)</b><small>POST /analyze · video → TennisTelemetry + telemetryHash · deterministic</small></div>
+          <div class="node k-ext"><b>LLM</b><small>Somnia native / Groq — turns numbers into coaching</small></div>
+          <div class="node k-ext"><b>IPFS (Pinata)</b><small>pins the full report; CID committed on-chain</small></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. WORKFLOW -->
+  <section>
+    <h2><span class="num">2</span> End-to-end job workflow</h2>
+    <p class="lead">One pass, from a posted job to an on-chain, reproducible analysis. Coloured tags show which plane owns each step.</p>
+    <div class="card">
+      <div class="flow">
+        <div class="step"><div class="idx">1</div><div class="body"><b>Coach posts a job<span class="who chain">chain</span></b><p>Web app calls <code>payJob(athlete, videoCid, deadline)</code> with escrow → emits <code>JobRequested</code> on Somnia.</p></div></div>
+        <div class="step"><div class="idx">2</div><div class="body"><b>Runner picks it up<span class="who agent">runner</span></b><p>The watcher sees <code>JobRequested</code> and hands it to the Form Agent.</p></div></div>
+        <div class="step"><div class="idx">3</div><div class="body"><b>Analyze the video<span class="who engine">engine</span></b><p>Form Agent <code>POST /analyze {videoUrl, videoCid}</code> → Vision Engine on Koyeb.</p></div></div>
+        <div class="step"><div class="idx">4</div><div class="body"><b>Engine measures the clip<span class="who engine">engine</span></b><p>video → CFR-normalize → sample frames → YOLO pose + tracking → kinematics → <code>TennisTelemetry</code> + a deterministic <code>telemetryHash</code>.</p></div></div>
+        <div class="step"><div class="idx">5</div><div class="body"><b>Turn numbers into coaching<span class="who agent">runner</span></b><p><code>normalizeTelemetry()</code> validates it; the LLM (Somnia-native → Groq fallback) writes a <code>FormReport</code> — honesty flags kept intact.</p></div></div>
+        <div class="step"><div class="idx">6</div><div class="body"><b>Pin the report<span class="who agent">runner</span></b><p>The full <code>reportPayload</code> — <em>telemetry (incl. telemetryHash) + FormReport + provenance</em> — is pinned to IPFS → <code>ipfsCid</code>.</p></div></div>
+        <div class="step"><div class="idx">7</div><div class="body"><b>Sign + submit the receipt<span class="who chain">chain</span></b><p>EIP-712 sign with <code>summaryHash = keccak256(reportPayload)</code> → <code>submitFormReceipt</code>. The on-chain receipt now <strong>commits the deterministic hash</strong> (via the report) — no contract change.</p></div></div>
+        <div class="step"><div class="idx">8</div><div class="body"><b>Prescribe + record<span class="who agent">runner</span><span class="who chain">chain</span></b><p>Prescriber Agent reads the FormReport → drills → <code>submitPrescription</code> → appended to the athlete's <code>AthleteSBT</code> history.</p></div></div>
+        <div class="step"><div class="idx">9</div><div class="body"><b>Display + audit<span class="who chain">chain</span></b><p>Web app shows the receipts; anyone can fetch the IPFS report, read <code>telemetryHash</code>, and re-run the engine on the canonical box to reproduce it.</p></div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 3. ENGINE PIPELINE -->
+  <section>
+    <h2><span class="num">3</span> Inside the engine — video in, telemetry out</h2>
+    <p class="lead">The engine ingests <strong>one video</strong> (a URL/CID), not frames. All frame handling is internal.</p>
+    <div class="card">
+      <div class="pipe">
+        <div class="pstep"><b>1 · Download</b><small>≤200MB, decodable video</small></div>
+        <span class="arrow">→</span>
+        <div class="pstep"><b>2 · CFR normalize</b><small>ffmpeg → 30fps, bit-exact (determinism anchor)</small></div>
+        <span class="arrow">→</span>
+        <div class="pstep"><b>3 · Sample frames</b><small>every Nth frame (sampleRate=5)</small></div>
+        <span class="arrow">→</span>
+        <div class="pstep"><b>4 · YOLO pose + track</b><small>17 body keypoints + stable trackId</small></div>
+        <span class="arrow">→</span>
+        <div class="pstep"><b>5 · Kinematics</b><small>angles, wrist velocity, kinetic chain</small></div>
+        <span class="arrow">→</span>
+        <div class="pstep k-engine" style="border-color:rgba(94,224,160,.45)"><b>6 · Telemetry + hash</b><small>TennisTelemetry v2.1 JSON</small></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. CONTRACT -->
+  <section>
+    <h2><span class="num">4</span> The data contract</h2>
+    <div class="grid2">
+      <div class="panel-sm">
+        <h3>Request — <span class="mono">POST /analyze</span></h3>
+        <table>
+          <tr><th>field</th><th>note</th></tr>
+          <tr><td class="mono">videoUrl</td><td>required — video / IPFS gateway URL</td></tr>
+          <tr><td class="mono">videoCid</td><td>provenance, echoed back</td></tr>
+          <tr><td class="mono">maxDurationS</td><td>default 45 (≤120)</td></tr>
+          <tr><td class="mono">sampleRate</td><td>default 5 (every Nth frame)</td></tr>
+        </table>
+      </div>
+      <div class="panel-sm">
+        <h3>Response — <span class="mono">TennisTelemetry v2.1</span></h3>
+        <table>
+          <tr><th>field</th><th>note</th></tr>
+          <tr><td class="mono">telemetryHash</td><td>deterministic on-chain commitment</td></tr>
+          <tr><td class="mono">engine / video / subject</td><td>provenance + which player</td></tr>
+          <tr><td class="mono">strokes[]</td><td>type, phases, angles, wrist velocity, kinetic chain</td></tr>
+          <tr><td class="mono">aggregate / quality</td><td>clip rollups + diagnostics</td></tr>
+          <tr><td class="mono">summary</td><td>flattened view the agent reads</td></tr>
+        </table>
+      </div>
+    </div>
+    <p class="lead" style="margin-top:14px">Full field-by-field reference: <code>docs/VELO-ENGINE-API.md</code>.</p>
+  </section>
+
+  <!-- 5. DETERMINISM -->
+  <section>
+    <h2><span class="num">5</span> Determinism &amp; the on-chain guarantee</h2>
+    <div class="grid2">
+      <div class="panel-sm">
+        <h3>Why it's reproducible</h3>
+        <ul class="tight">
+          <li>Single-thread, seeded, deterministic algorithms; pinned BoT-SORT + rounded keypoints.</li>
+          <li>CFR transcode → byte-stable decoded frames.</li>
+          <li><code>telemetryHash</code> = sha256 over the canonical numeric telemetry.</li>
+          <li><strong>Proven on Koyeb:</strong> two runs → identical hash.</li>
+        </ul>
+      </div>
+      <div class="panel-sm">
+        <h3>How it lands on-chain (no contract change)</h3>
+        <ul class="tight">
+          <li>The report pinned to IPFS includes the telemetry <em>with</em> <code>telemetryHash</code>.</li>
+          <li>The receipt's <code>summaryHash = keccak256(report)</code> commits it transitively.</li>
+          <li><strong>Audit:</strong> fetch IPFS doc → read hash → re-run engine → match.</li>
+          <li>Cross-arch caveat: the canonical hash must come from <strong>this Koyeb box</strong> (amd64), never a laptop.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6. STATUS -->
+  <section>
+    <h2><span class="num">6</span> Status &amp; who does what</h2>
+    <div class="card">
+      <div style="margin-bottom:14px">
+        <span class="pill ok">✓ Engine deployed (Koyeb)</span>
+        <span class="pill ok">✓ Deterministic (amd64)</span>
+        <span class="pill ok">✓ Latency safe (&lt;120s)</span>
+        <span class="pill ok">✓ R2 on-chain hash fix</span>
+        <span class="pill ok">✓ EIP-712 matches live contract</span>
+        <span class="pill wait">⏳ Wire runner → engine</span>
+        <span class="pill wait">⏳ On-chain submit (funded wallet)</span>
+        <span class="pill todo">↗ Racket keypoints (deferred)</span>
+        <span class="pill todo">↗ Phone-clip validation (deferred)</span>
+      </div>
+      <table>
+        <tr><th>Owner</th><th>Next</th></tr>
+        <tr><td><b>Eshaan</b> — model</td><td>Engine live + deterministic ✓. Deferred: racket fusion, yolo11l precision, phone hardval.</td></tr>
+        <tr><td><b>Craig</b> — integration / chain</td><td>Set <code>VISION_ENGINE_URL</code> + <code>VISION_MODE=live</code>; run one job with a funded wallet → confirm the receipt's IPFS report carries <code>telemetryHash</code>.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Velo Vision Engine · TennisTelemetry v2.1 · generated 2026-06-07 · companion to <span class="mono">docs/VELO-ENGINE-API.md</span>
+  </footer>
+</div>
+</body>
+</html>
