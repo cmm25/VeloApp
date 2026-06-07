@@ -17,13 +17,16 @@ Dates: 2026-06-04 → 2026-06-06. Branch: `feature-nn-engine-v2` (off `origin/ma
    (`OMP_NUM_THREADS=1` vs `8`). Measured same-architecture keypoint drift = **0 px**, so
    pinning makes reproducibility a guarantee. Honest scope: reproducible on the *same
    pinned arch/image*, not arbitrary CPUs — stated, not hidden.
-2. **velo19 racket head (Phase 2) — null result, $1.50.** A single `[19,3]` pose head
-   (COCO-17 body + racket butt/tip) trained on broadcast RacketVision learns racket well
-   (held-out mAP50-95 **0.642**) but **collapses hard-case body pose** (hardval 0.105 vs
-   stock 0.466) — catastrophic forgetting, same pattern as the earlier body-finetune.
-   Conclusion: the single-head approach on broadcast data is dead; a **separate** racket
-   head (isolating body) or phone-domain body data is required. The unattended monitor
-   auto-stopped on collapse, spending $1.50 of a $12 budget.
+2. **velo19 racket head (Phase 2) — single-head NULL, separate-head WIN.** A single `[19,3]`
+   pose head (COCO-17 body + racket butt/tip) trained on broadcast RacketVision learns racket
+   (held-out mAP50-95 **0.642**) but **collapses hard-case body pose** (hardval 0.105 vs stock
+   0.466) — catastrophic forgetting. So we pivoted to a **separate racket-only `[5,3]` model**
+   (class=racket, no body keypoints): it localizes racket butt/tip just as well (**mAP50-95
+   0.619**, mAP50 0.863, detection box 0.893) **with body pose untouched by construction** (no
+   collapse). Answers Gemini Q3 empirically: **use the separate racket head, not the single
+   head.** Total Modal spend ~$8 of $12 (one $1.50 velo19 run + one ~$6.6 racket run that hung
+   to near the timeout — timeout since tightened to 3h). Unattended monitors enforced the cap
+   and the adaptive stops.
 3. **Method that produced these:** research/audit/review run as multi-agent workflows with
    adversarial verification; every quantitative claim measured, not assumed; null results
    reported as first-class outcomes.
@@ -159,10 +162,29 @@ adaptive-stop — reusable for the separate-head attempt); RacketVision tennis s
 
 ---
 
-## 7. Open / next
-- **Separate racket head (option 1, starting now):** detector → player crop → racket-only
-  keypoint model trained on RacketVision crops (no body keypoints ⇒ body cannot collapse by
-  construction), fused into velo19 telemetry downstream. Reuses the build/eval/monitor harness.
+## 7. Result: separate racket head (option 1) — WORKS
+
+Trained a racket-only `[5,3]` YOLO-pose model (class=racket; RacketVision bbox + 5 keypoints
+top/bottom/handle/left/right; 5731/818/846 split; no body, no teacher pass — `build_racket.py`).
+Two-stage, imgsz 960, on Modal A10G (`racket_960_w`). Held-out eval (`eval_racket.py`):
+
+| metric | value |
+|---|---|
+| racket pose mAP50-95 | **0.6188** |
+| racket pose mAP50 | 0.8633 |
+| racket box mAP50 | 0.8934 |
+
+The detector localizes the racket fine at full-frame imgsz 960 (the "too small at 13 px" worry
+was unfounded), and because the model is racket-only the **stock COCO-17 body model is never
+touched — no body collapse**. This is the architecture velo19's null pointed to, confirmed.
+
+**Next: engine fusion (productize).** Run this racket model as a second analyzer in the engine:
+stock coco17 (body) + racket model (butt/tip); associate the racket to the player; populate
+`JointAngles.racket_face_deg` + `racket_tip`/`racket_butt` (idx17/18) and flip
+`KeypointSpec.indexing="velo19"`, `EngineInfo.racket_keypoints=True`. Body telemetry unchanged,
+so it carries Phase-1 determinism + honesty. Then upgrade the wrist proxy → true wrist-snap
+(the racket-tip unlock). Caveat unchanged: trained on broadcast; phone-domain racket transfer
+still unproven (no phone racket eval).
 - R1 (Koyeb CPU latency) still gates the dense pass + yolo11l swap — unmeasured on target.
 - No phone-clip hardval ⇒ no absolute phone accuracy for anything yet (the real eval gap).
 - Determinism cross-arch: declare the canonical arch/image; verifiers re-run it.

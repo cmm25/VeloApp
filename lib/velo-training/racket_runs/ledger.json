@@ -1,0 +1,27 @@
+{
+  "runs": [
+    {
+      "name": "racket_960_w",
+      "config": {
+        "name": "racket_960_w",
+        "epochs": 100,
+        "imgsz": 960
+      },
+      "launched": true,
+      "launch_epoch": 1780796538.129777,
+      "launched_at": "2026-06-06 21:42",
+      "evaled": true,
+      "eval": {
+        "racket_map5095": 0.6188,
+        "racket_map50": 0.8633,
+        "box_map50": 0.8934,
+        "too_small_fail": false,
+        "ship_candidate": true
+      },
+      "launch_log": "/Volumes/DevSSD/Projects/2026/VeloApp/lib/velo-training/racket_runs/racket_960_w.launch.log",
+      "real_cost_note": "~$6.6 (run hung post-best.pt to near 6h Modal timeout; app manually stopped)"
+    }
+  ],
+  "stopped": true,
+  "stop_reason": "SUCCESS: racket_960_w ship-candidate (racket mAP50-95 0.619, mAP50 0.863, box 0.893); SEPARATE head leaves body untouched (no collapse). Stop before run2 \u2014 run1 real cost ~$6.6 of $12."
+}

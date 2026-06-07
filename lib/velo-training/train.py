@@ -181,7 +181,10 @@ try:
         image=image,
         gpu="A10G",
         volumes={"/vol": volume},
-        timeout=60 * 60 * 6,  # 6h headroom so a 2-stage 100-epoch run can't be killed mid-train
+        # 3h ceiling (~$3.3 A10G): a 2-stage run finishes in ~2h; tighter than the old 6h so a
+        # hung/detached run (seen: StreamTerminatedError left a task spinning post-best.pt) can't
+        # burn to 6h ≈ $6.6. Raise only if a legitimately longer recipe needs it.
+        timeout=60 * 60 * 3,
         # Add `secrets=[modal.Secret.from_name("roboflow")]` to prep data in-cloud.
     )
     def train_modal(epochs: int = 100, batch: int = 16, baseline: bool = False,
