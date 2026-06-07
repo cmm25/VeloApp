@@ -91,58 +91,46 @@ Respond with ONLY the JSON object, no markdown, no explanation.`;
  * ════════════════════════════════════════════════════════════════════════════
  */
 export function buildExternalModelPrompt(output: ExternalModelOutput): string {
-  const metrics = Object.entries(output.metrics)
-    .map(([k, v]) => `  ${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
-    .join("\n");
+  const s = output.summary;
+  const gain = output.aggregate.peakProximalToDistalGain;
 
-  const observations = output.observations.map((o) => `  - ${o}`).join("\n");
-
-  return `You are a professional tennis biomechanics analyst. An independently-trained, aspect-specific vision model has analysed a tennis clip and emitted the structured measurements below. Translate its raw output into a coaching form analysis report.
+  return `You are a professional tennis biomechanics analyst. A YOLO11-pose vision model has analysed a tennis clip. Translate its measurements into a coaching form analysis report.
 
 MODEL OUTPUT:
-- Aspect analysed: ${output.aspect}
-${output.confidence != null ? `- Model confidence: ${(output.confidence * 100).toFixed(0)}%` : ""}
+- Dominant stroke: ${s.dominantStroke} (${s.strokeCount} strokes)
+- Duration: ${(s.durationMs / 1000).toFixed(1)}s, ${s.framesAnalyzed} frames analysed
+- Consistency score: ${(output.aggregate.consistencyScore * 100).toFixed(0)}%
+${gain != null ? `- Kinetic chain (proximal→distal gain): ${(gain * 100).toFixed(0)}% (100% = textbook)` : ""}
+- Keypoint confidence: ${(output.quality.meanKeypointConfidence * 100).toFixed(0)}%
+- Clip quality ok: ${output.quality.clipQualityOk}
 
-Metrics:
-${metrics || "  (none provided)"}
+Peak angles (degrees):
+  Shoulder: ${s.peakAngles.shoulder.toFixed(1)}° | Elbow: ${s.peakAngles.elbow.toFixed(1)}° | Wrist: ${s.peakAngles.wrist.toFixed(1)}°
+  Hip: ${s.peakAngles.hip.toFixed(1)}° | Knee: ${s.peakAngles.knee.toFixed(1)}°
 
-Observations:
-${observations || "  (none provided)"}
+Average angles (degrees):
+  Shoulder: ${s.avgAngles.shoulder.toFixed(1)}° | Elbow: ${s.avgAngles.elbow.toFixed(1)}° | Wrist: ${s.avgAngles.wrist.toFixed(1)}°
+  Hip: ${s.avgAngles.hip.toFixed(1)}° | Knee: ${s.avgAngles.knee.toFixed(1)}°
 
-${output.notes ? `Model notes: ${output.notes}` : ""}
+${s.analysisNotes ? `Engine notes: ${s.analysisNotes}` : ""}
 
-TASK:
-Return a JSON object matching this schema exactly:
+TASK: Return a JSON object matching this schema exactly:
 {
-  "strokeType": "forehand" | "backhand" | "serve" | "volley" | "unknown",
-  "overallScore": <number 0-10>,
-  "issues": [
-    {
-      "area": "shoulder" | "elbow" | "wrist" | "hip" | "knee" | "footwork" | "balance" | "timing" | "symmetry",
-      "severity": "critical" | "moderate" | "minor",
-      "phase": "preparation" | "contact" | "follow_through" | "overall",
-      "observation": "<what is wrong, max 300 chars>",
-      "recommendation": "<what to fix, max 300 chars>"
-    }
-  ],
-  "strengths": [
-    { "area": "<area>", "observation": "<what is good, max 200 chars>" }
-  ],
-  "keyFindings": "<2-3 sentence clinical summary of the most important findings, max 500 chars>",
+  "strokeType": "forehand"|"backhand"|"serve"|"volley"|"unknown",
+  "overallScore": <0-10>,
+  "issues": [{ "area": "shoulder"|"elbow"|"wrist"|"hip"|"knee"|"footwork"|"balance"|"timing"|"symmetry", "severity": "critical"|"moderate"|"minor", "phase": "preparation"|"contact"|"follow_through"|"overall", "observation": "<max 300 chars>", "recommendation": "<max 300 chars>" }],
+  "strengths": [{ "area": "<area>", "observation": "<max 200 chars>" }],
+  "keyFindings": "<2-3 sentence summary, max 500 chars>",
   "analysedAt": "${new Date().toISOString()}"
 }
 
 Rules:
-- Base every judgement ONLY on the model output above — do not invent measurements it did not provide
-- Maximum 5 issues, ordered by severity (critical first)
-- Maximum 3 strengths
-- overallScore: 8-10 = excellent, 6-7 = good, 4-5 = needs work, 0-3 = significant issues
-- Map the model's aspect to the closest strokeType (use "unknown" if unclear)
-- keyFindings must be usable by a coach reading it on their phone
-
-Respond with ONLY the JSON object, no markdown, no explanation.`;
+- Reference actual angle values from the data
+- Maximum 5 issues (critical first), 3 strengths
+- overallScore: 8-10 excellent, 6-7 good, 4-5 needs work, 0-3 significant issues
+- If kinetic chain gain < 60%, flag as a timing/sequencing issue
+- Respond with ONLY the JSON object, no markdown`;
 }
-
 /**
  * Builds the extraction prompt for the LLM Parse Website agent — a search for one
  * real coaching tip targeting the diagnosed stroke fault.
