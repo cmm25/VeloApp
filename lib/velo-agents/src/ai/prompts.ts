@@ -71,19 +71,16 @@ Respond with ONLY the JSON object, no markdown, no explanation.`;
 }
 
 /**
- * ════════════════════════════════════════════════════════════════════════════
- *  ⚠  THE SINGLE SPECIALIZATION POINT for the external analysis model.
- * ════════════════════════════════════════════════════════════════════════════
- * Everything else about the second model agent is generic and already wired:
- * the HTTP client (external-model.ts), the on-chain registration, the routing,
- * the Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
+ * THE SINGLE SPECIALIZATION POINT for the external analysis model. Everything
+ * else about the second model agent is generic and already wired: the HTTP
+ * client (external-model.ts), the on-chain registration, the routing, the
+ * Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
  *
  * `ExternalModelOutputSchema` (schemas.ts) and this prompt are aligned to the
  * deployed engine's POST /analyze-external FLAT contract (aspect + metrics +
  * observations + confidence + notes), verified live. To point the Serve skill at
  * a different model, update EXTERNAL_MODEL_SKILL / EXTERNAL_MODEL_NAME (config)
  * and the matching SKILL_NAMES entry in Velo/src/lib/domain/agents.ts.
- * ════════════════════════════════════════════════════════════════════════════
  */
 export function buildExternalModelPrompt(output: ExternalModelOutput): string {
   const m = output.metrics;

@@ -59,7 +59,7 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
 
   await withRetry(
     async () => {
-      // FIX D: replay guard. A restart re-scans old blocks; the external agent also
+      // Replay guard: a restart re-scans old blocks, and the external agent also
       // submits a STANDARD form receipt, so skip unless the job still awaits one.
       const job = await fetchJob(jobId);
       if (job.status !== JobStatus.Requested) {
@@ -70,16 +70,15 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
         return;
       }
 
-      // 1. Resolve video URL (raw cid, routing prefix already stripped)
+      // raw cid, routing prefix already stripped
       const videoUrl = resolveVideoUrl(videoCid);
       if (!videoUrl) {
         log.warn("Local CID detected — external model still receives the raw cid", { videoCid });
       }
 
-      // 2. Call the externally-hosted model over HTTP → validated output
       const modelOutput = await callExternalModel(videoUrl, videoCid);
 
-      // 3. AI translation of model output → FormReport (Somnia native → Groq)
+      // AI translation of model output → FormReport (Somnia native → Groq)
       const prompt = buildExternalModelPrompt(modelOutput);
       const { data: formReport, provenance } = await reason({
         prompt,
@@ -93,7 +92,6 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
         path: provenance.path,
       });
 
-      // 4. Pin full report to IPFS
       const reportPayload = {
         type: "velo/external-model-report/v1",
         jobId,
@@ -108,7 +106,6 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
         `external-report-${jobId.slice(0, 10)}`
       );
 
-      // 5. Build receipt
       const reportBytes = new TextEncoder().encode(JSON.stringify(reportPayload));
       const nonce = await fetchNonce(agentAddress);
 
@@ -122,7 +119,6 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
         deadline
       );
 
-      // 6. Sign + submit
       const signature = await signReceipt(wallet, receipt, config.contracts.orchestrator);
       const txReceipt = await submitFormReceiptTx(receipt, signature, wallet);
 
@@ -132,7 +128,6 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
         block: txReceipt.blockNumber,
       });
 
-      // 7. Store for API
       await upsertReceipt({
         jobId,
         orchestrator: config.contracts.orchestrator,
