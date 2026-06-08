@@ -105,6 +105,18 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         return;
       }
 
+      // Strict expiry: never attempt to settle past the deadline — the contract
+      // reverts DeadlinePassed and the escrow is refundable to the poster via
+      // expireBounty. Skip so the agent doesn't loop on a doomed settlement.
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      if (nowSec >= bounty.deadline) {
+        log.info("Bounty past deadline — skipping settlement (strict expiry)", {
+          bountyId: bountyId.toString(),
+          deadline: bounty.deadline.toString(),
+        });
+        return;
+      }
+
       // 1. Resolve video URL
       const videoUrl = resolveVideoUrl(videoCid);
       if (!videoUrl) {
