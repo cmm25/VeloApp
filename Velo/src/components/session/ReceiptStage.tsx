@@ -49,7 +49,7 @@ import {
 import { type IndexedEntry, type AiProvenance } from "@/lib/web3/indexer";
 import { somniaTestnet } from "@/lib/web3/chain";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
-import { getRecentLogs } from "@/lib/web3/logs";
+import { getRecentLogs, getLogsChunked, recentRangeForTimestamp } from "@/lib/web3/logs";
 import type { AbiEvent } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -277,6 +277,7 @@ export function ReceiptStage({
   jobId,
   receipt,
   indexedEntry,
+  jobCreatedAt,
   placeholderTitle,
   placeholderHint,
 }: {
@@ -284,6 +285,12 @@ export function ReceiptStage({
   jobId: Hex;
   receipt: DecodedReceipt | null;
   indexedEntry: IndexedEntry | null;
+  /**
+   * The job's on-chain creation timestamp (unix seconds). Used to bound the
+   * on-chain signature scan to the job's lifetime when the indexer can't
+   * supply the signature — so "Verify signature" works for older receipts too.
+   */
+  jobCreatedAt?: bigint;
   placeholderTitle: string;
   placeholderHint: string;
 }) {
@@ -370,6 +377,7 @@ export function ReceiptStage({
               jobId={jobId}
               receipt={receipt}
               indexedEntry={indexedEntry}
+              jobCreatedAt={jobCreatedAt}
               state={verifyState}
               setState={setVerifyState}
             />
@@ -542,6 +550,7 @@ function ReceiptIntegrityPanel({
   jobId,
   receipt,
   indexedEntry,
+  jobCreatedAt,
   state,
   setState,
 }: {
@@ -549,6 +558,7 @@ function ReceiptIntegrityPanel({
   jobId: Hex;
   receipt: DecodedReceipt;
   indexedEntry: IndexedEntry | null;
+  jobCreatedAt?: bigint;
   state: VerifyState;
   setState: (s: VerifyState) => void;
 }) {
@@ -602,19 +612,34 @@ function ReceiptIntegrityPanel({
           setState({ phase: "no-sig", reason: "Event ABI missing" });
           return;
         }
-        // Somnia caps `eth_getLogs` at 1000-block windows; scan a bounded recent
-        // window (the indexer signature is the fast path — this only runs when it
-        // isn't available). A miss here means "not found in the recent window",
-        // surfaced clearly rather than as a silent empty.
-        const logs = (await getRecentLogs(client, {
-          address: orch,
-          event: event as AbiEvent,
-          args: { jobId },
-        })) as Array<{ transactionHash: Hex | null }>;
+        // Somnia caps `eth_getLogs` at 1000-block windows (the indexer signature
+        // is the fast path — this only runs when it isn't available). When we
+        // know the job's creation time, bound the scan to the job's lifetime so
+        // an older receipt still resolves; otherwise fall back to a recent
+        // window. A miss is surfaced clearly rather than as a silent empty.
+        const logs = (jobCreatedAt
+          ? await (async () => {
+              const { fromBlock, toBlock } = await recentRangeForTimestamp(
+                client,
+                jobCreatedAt,
+              );
+              return getLogsChunked(client, {
+                address: orch,
+                event: event as AbiEvent,
+                args: { jobId },
+                fromBlock,
+                toBlock,
+              });
+            })()
+          : await getRecentLogs(client, {
+              address: orch,
+              event: event as AbiEvent,
+              args: { jobId },
+            })) as Array<{ transactionHash: Hex | null }>;
         if (logs.length === 0) {
           setState({
             phase: "no-sig",
-            reason: "No recent submission log on chain",
+            reason: "No submission log found on chain for this receipt",
           });
           return;
         }
@@ -739,6 +764,14 @@ function ReceiptIntegrityPanel({
               <span className="text-chalk">{shortAddr(receipt.agent, 6, 6)}</span>
             </div>
             <div className="text-chalk/50 mt-1 break-all">sig {shortAddr(state.signature, 10, 8)}</div>
+            {!state.ok && (
+              <div className="text-destructive/80 mt-2 leading-relaxed normal-case font-sans text-[10px]">
+                The signature is valid but recovers a different signer than the
+                receipt claims. This usually means the receipt was signed for a
+                different orchestrator deployment than the one this app is
+                pointed at (a redeploy / stale config), not a forged receipt.
+              </div>
+            )}
           </div>
         </div>
       )}
