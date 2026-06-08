@@ -256,11 +256,25 @@ export async function runParseWebsite(
       "Somnia parse-website agent not configured (set SOMNIA_AGENT_RELAY_ADDRESS and SOMNIA_PARSE_WEBSITE_AGENT_ID)"
     );
   }
-  // resolveUrl=false scrapes the explicit source URL directly (skips the search
-  // layer); numPages=1; confidenceThreshold=60.
+  // Scrape tuning is configurable (see config.somniaAgents.parseWebsite*). The
+  // defaults resolve/search from the source over a small page budget at a low
+  // confidence threshold, so a specific diagnosed fault yields a tip instead of
+  // being skipped — a single static page at a high threshold rarely matched.
+  const resolveUrl = config.somniaAgents.parseWebsiteResolveUrl;
+  const numPages = config.somniaAgents.parseWebsiteNumPages;
+  const confidenceThreshold = config.somniaAgents.parseWebsiteConfidenceThreshold;
   const payload = new ethers.Interface([...PARSE_WEBSITE_AGENT_ABI]).encodeFunctionData(
     "ExtractString",
-    ["tip", "A concise, actionable tennis coaching tip", [], prompt, url, false, 1, 60]
+    [
+      "tip",
+      "A concise, actionable tennis coaching tip",
+      [],
+      prompt,
+      url,
+      resolveUrl,
+      numPages,
+      confidenceThreshold,
+    ]
   );
   return dispatchRequest(config.somniaAgents.parseWebsiteAgentId, payload, signer, "string");
 }
@@ -298,18 +312,42 @@ async function dispatchRequest(
     );
   }
   const reward = pricePerAgent * subSize;
-  const deposit = reserve + reward;
+  const computed = reserve + reward;
+  // Absolute floor safety net: getRequestDeposit() is ONLY the ops reserve and
+  // does not include an agent's own price floor. If an agent's real on-chain
+  // requirement ever exceeds our computed sizing, SOMNIA_AGENTS_MIN_DEPOSIT_WEI
+  // lifts the deposit to meet it (unused amount is rebated to the relay).
+  let minTotal = 0n;
+  try {
+    minTotal = BigInt(config.somniaAgents.minDepositWei || "0");
+  } catch {
+    minTotal = 0n;
+  }
+  const deposit = computed > minTotal ? computed : minTotal;
   const perAgentBudget = subSize > 0n ? reward / subSize : 0n;
 
+  // platformRequiredWei is what the platform actually enforces at request time
+  // (the getRequestDeposit() reserve floor) — log it next to the final deposit so
+  // any future underfunding is visible at a glance, not buried in a bare revert.
   log.info("Creating Somnia agent request via relay", {
     agentId,
     relay: config.somniaAgents.relayAddress,
     subSize: subSize.toString(),
-    reserveWei: reserve.toString(),
+    platformRequiredWei: reserve.toString(),
     rewardWei: reward.toString(),
+    computedDepositWei: computed.toString(),
+    minDepositWei: minTotal.toString(),
     depositWei: deposit.toString(),
     perAgentBudgetWei: perAgentBudget.toString(),
   });
+  if (deposit < reserve) {
+    // Defensive: should be impossible (computed already includes reserve), but a
+    // misconfigured min must never drop below the platform floor.
+    throw new SomniaAgentsUnavailable(
+      `final deposit ${deposit} is below the platform's required floor ${reserve} — ` +
+        `check SOMNIA_AGENTS_MIN_DEPOSIT_WEI`
+    );
+  }
   if (perAgentBudget === 0n) {
     log.warn(
       "perAgentBudget is 0 — runners will skip this request. Raise SOMNIA_AGENTS_PRICE_PER_AGENT_WEI."
