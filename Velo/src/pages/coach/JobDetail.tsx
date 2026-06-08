@@ -209,6 +209,7 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
             receipt={formReceipt}
             indexedEntry={indexed?.form ?? null}
             jobCreatedAt={job.createdAt}
+            jobDeadline={job.deadline}
             placeholderTitle="Awaiting Form agent"
             placeholderHint="Form agent will submit signed receipt on-chain."
           />
@@ -220,6 +221,7 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
             receipt={rxReceipt}
             indexedEntry={indexed?.prescription ?? null}
             jobCreatedAt={job.createdAt}
+            jobDeadline={job.deadline}
             placeholderTitle="Awaiting Prescriber agent"
             placeholderHint="Prescriber agent will submit signed receipt on-chain."
           />
