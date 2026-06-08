@@ -4,17 +4,22 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import fs from "fs";
 
-const deploymentPath = path.resolve(
-  __dirname,
-  "../deployments/somniaTestnet.json",
-);
+// Resolve the on-chain deployment manifest. Prefer a copy vendored inside Velo/
+// (so a Vercel build whose root is Velo/ is self-contained) and fall back to the
+// monorepo-root copy for local/CI builds run from the repo root.
+const deploymentCandidates = [
+  path.resolve(__dirname, "deployments/somniaTestnet.json"),
+  path.resolve(__dirname, "../deployments/somniaTestnet.json"),
+];
 
 let deploymentJson: unknown = null;
-if (fs.existsSync(deploymentPath)) {
+for (const deploymentPath of deploymentCandidates) {
+  if (!fs.existsSync(deploymentPath)) continue;
   try {
     deploymentJson = JSON.parse(fs.readFileSync(deploymentPath, "utf-8"));
+    break;
   } catch (err) {
-    console.warn("[velo-web] Failed to parse somniaTestnet.json", err);
+    console.warn("[velo-web] Failed to parse", deploymentPath, err);
   }
 }
 
