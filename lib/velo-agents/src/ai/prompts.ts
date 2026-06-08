@@ -60,6 +60,7 @@ Return a JSON object matching this schema exactly:
 }
 
 Rules:
+- "area" MUST be exactly one of: shoulder, elbow, wrist, hip, knee, footwork, balance, timing, symmetry. Map consistency/rhythm/tempo/sequencing issues to "timing", and left-right/asymmetry/stability issues to "symmetry" or "balance". Never invent other area values.
 - Maximum 5 issues, ordered by severity (critical first)
 - Maximum 3 strengths
 - overallScore: 8-10 = excellent, 6-7 = good, 4-5 = needs work, 0-3 = significant issues
@@ -119,6 +120,7 @@ TASK: Return a JSON object matching this schema exactly:
 }
 
 Rules:
+- "area" MUST be exactly one of: shoulder, elbow, wrist, hip, knee, footwork, balance, timing, symmetry. Map consistency/rhythm/tempo/sequencing issues to "timing", and left-right/asymmetry/stability issues to "symmetry" or "balance". Never use "consistency" or any other value.
 - Reference actual angle values from the data
 - Maximum 5 issues (critical first), 3 strengths
 - overallScore: 8-10 excellent, 6-7 good, 4-5 needs work, 0-3 significant issues
