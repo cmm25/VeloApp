@@ -64,8 +64,8 @@ replit.nix
 # ── Agent memory (local, not committed) ───────────────────────────────────────
 .agents/
 
-# ── Reference folders  ───────────────────
-scripts/
+# ── Reference folders (anchored to the repo root so nested project dirs like
+#    Hardhat/scripts/ and docs/ are NOT swallowed by these blanket rules) ─────
+/scripts/
 /reference-files-eshaan/
-.agents/
-docs/
+/docs/
