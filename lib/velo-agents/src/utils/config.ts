@@ -104,6 +104,17 @@ export const config = {
       "SOMNIA_TECHNIQUE_SOURCE_URL",
       "https://www.usta.com/en/home/improve/tips-and-instruction.html"
     ),
+    // Parse-website scrape tuning (was hardcoded). resolveUrl=true lets the agent
+    // resolve/search from the source rather than scraping a single static page
+    // that rarely matches a specific fault; numPages gives it a small budget to
+    // find the relevant passage; confidenceThreshold is low enough that a real
+    // fault yields a tip instead of being skipped for low confidence.
+    parseWebsiteResolveUrl: optionalBool("SOMNIA_PARSE_WEBSITE_RESOLVE_URL", true),
+    parseWebsiteNumPages: optionalInt("SOMNIA_PARSE_WEBSITE_NUM_PAGES", 3),
+    parseWebsiteConfidenceThreshold: optionalInt(
+      "SOMNIA_PARSE_WEBSITE_CONFIDENCE",
+      40
+    ),
     // Deposit sizing: deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize.
     // subcommitteeSize MUST match the platform default (3) — the basic createRequest
     // uses that default, and the contract divides the reward pot by it.
@@ -112,6 +123,14 @@ export const config = {
     // fixed per-type price. LLM Inference = 0.07 STT today (JSON API is 0.03 STT).
     // See docs.somnia.network/agents/invoking-agents/gas-fees#current-per-agent-prices
     pricePerAgentWei: optional("SOMNIA_AGENTS_PRICE_PER_AGENT_WEI", "70000000000000000"), // 0.07 STT
+    // Absolute minimum total deposit (wei). getRequestDeposit() returns ONLY the
+    // operations-reserve floor (~0.03 STT) — it does NOT include the agent's own
+    // price floor. If a specific agent's on-chain requirement ever exceeds our
+    // computed deposit (reserve + pricePerAgent × subcommittee), set this so the
+    // request is never underfunded. 0 = no extra floor (computed sizing applies).
+    // The platform rebates any unused deposit to the relay (reclaimable), so an
+    // over-floor here is safe. Final deposit = max(computed, this).
+    minDepositWei: optional("SOMNIA_AGENTS_MIN_DEPOSIT_WEI", "0"),
     // How long the runner polls getRequest() for consensus before falling back (ms).
     // On-chain LLM inference across a subcommittee can take well over a minute.
     requestTimeoutMs: optionalInt("SOMNIA_AGENTS_TIMEOUT_MS", 120_000),
