@@ -288,9 +288,3 @@ export function normalizeEndpointUrl(endpoint: string): string {
   }
   return endpoint;
 }
-
-/** Health-check URL (`/healthz`) derived from an agent's registered endpoint. */
-export function agentHealthUrl(endpoint: string): string {
-  const base = normalizeEndpointUrl(endpoint).replace(/\/+$/, "");
-  return `${base}/healthz`;
-}
