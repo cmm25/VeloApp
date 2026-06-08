@@ -1,5 +1,10 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
 function required(key: string): string {
   const v = process.env[key];
   if (!v || v.trim() === "") {
@@ -51,7 +56,8 @@ export const config = {
   // them the agent registers nothing, the picker only offers the Form model,
   // and the existing pipeline is unchanged.
   externalModel: {
-    // The model's HTTP endpoint. POSTed { videoUrl, videoCid } → JSON.
+    // The model's base host. The agent appends /analyze and POSTs
+    // { videoUrl, videoCid } → JSON (same convention as ENGINE_URL).
     url: optional("EXTERNAL_MODEL_URL", ""),
     // Optional bearer token sent as Authorization to the model endpoint.
     apiKey: optional("EXTERNAL_MODEL_API_KEY", ""),
@@ -89,6 +95,26 @@ export const config = {
     llmAgentId: optional("SOMNIA_LLM_AGENT_ID", ""),
     // JSON API Request agent — id 13174292974160097713 in the docs oracle example.
     jsonApiAgentId: optional("SOMNIA_JSON_API_AGENT_ID", "13174292974160097713"),
+    // LLM Parse Website agent — extracts a coaching tip from a real source URL
+    // (consensus-verified). Empty default: the verified-technique path activates
+    // only when this id is set, exactly like SOMNIA_LLM_AGENT_ID.
+    parseWebsiteAgentId: optional("SOMNIA_PARSE_WEBSITE_AGENT_ID", ""),
+    // Real, verified coaching source the parse-website agent reads from.
+    techniqueSourceUrl: optional(
+      "SOMNIA_TECHNIQUE_SOURCE_URL",
+      "https://www.usta.com/en/home/improve/tips-and-instruction.html"
+    ),
+    // Parse-website scrape tuning (was hardcoded). resolveUrl=true lets the agent
+    // resolve/search from the source rather than scraping a single static page
+    // that rarely matches a specific fault; numPages gives it a small budget to
+    // find the relevant passage; confidenceThreshold is low enough that a real
+    // fault yields a tip instead of being skipped for low confidence.
+    parseWebsiteResolveUrl: optionalBool("SOMNIA_PARSE_WEBSITE_RESOLVE_URL", true),
+    parseWebsiteNumPages: optionalInt("SOMNIA_PARSE_WEBSITE_NUM_PAGES", 3),
+    parseWebsiteConfidenceThreshold: optionalInt(
+      "SOMNIA_PARSE_WEBSITE_CONFIDENCE",
+      40
+    ),
     // Deposit sizing: deposit = getRequestDeposit() + pricePerAgent × subcommitteeSize.
     // subcommitteeSize MUST match the platform default (3) — the basic createRequest
     // uses that default, and the contract divides the reward pot by it.
@@ -97,6 +123,14 @@ export const config = {
     // fixed per-type price. LLM Inference = 0.07 STT today (JSON API is 0.03 STT).
     // See docs.somnia.network/agents/invoking-agents/gas-fees#current-per-agent-prices
     pricePerAgentWei: optional("SOMNIA_AGENTS_PRICE_PER_AGENT_WEI", "70000000000000000"), // 0.07 STT
+    // Absolute minimum total deposit (wei). getRequestDeposit() returns ONLY the
+    // operations-reserve floor (~0.03 STT) — it does NOT include the agent's own
+    // price floor. If a specific agent's on-chain requirement ever exceeds our
+    // computed deposit (reserve + pricePerAgent × subcommittee), set this so the
+    // request is never underfunded. 0 = no extra floor (computed sizing applies).
+    // The platform rebates any unused deposit to the relay (reclaimable), so an
+    // over-floor here is safe. Final deposit = max(computed, this).
+    minDepositWei: optional("SOMNIA_AGENTS_MIN_DEPOSIT_WEI", "0"),
     // How long the runner polls getRequest() for consensus before falling back (ms).
     // On-chain LLM inference across a subcommittee can take well over a minute.
     requestTimeoutMs: optionalInt("SOMNIA_AGENTS_TIMEOUT_MS", 120_000),

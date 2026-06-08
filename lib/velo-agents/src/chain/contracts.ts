@@ -3,6 +3,7 @@ import { ORCHESTRATOR_ABI, AGENT_REGISTRY_ABI, BOUNTY_EXTENSION_ABI, type Receip
 import { config, externalModelConfigured } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
 import { skillHash } from "./job-spec.js";
+import { signerHasOperatorRole } from "../ai/somnia-agents.js";
 
 const log = makeLogger("contracts");
 
@@ -237,19 +238,64 @@ export async function registerAgentsOnChain(apiBase: string): Promise<void> {
     agentType: "Prescriber",
   });
 
-  // External model agent — only registered once its URL + dedicated key are set.
-  // Until then it advertises nothing on-chain, so the coach's picker only shows
-  // the Form (pose) model and existing behaviour is unchanged.
+  // External model (serve) agent — only registered once its URL + dedicated key
+  // are set. Until then it advertises nothing on-chain, so the coach's picker
+  // only shows the Form (pose) model and existing behaviour is unchanged. Its
+  // on-chain endpoint points at the YOLO engine itself (the Koyeb host), not the
+  // Render runner API, so the directory's health link resolves to the engine.
   if (externalModelConfigured()) {
     await _ensureRegistered({
       wallet:    getExternalAgentWallet(),
       reg,
       name:      config.externalModel.name,
-      endpoint:  `${apiBase}/api/healthz`,
+      endpoint:  externalModelHealthUrl(),
       skills:    [externalModelSkillHash(), skill("velo.v1")],
       feeWei:    0n,
       agentType: "ExternalModel",
     });
+  }
+}
+
+/**
+ * Health URL of the external model's own engine host (Koyeb).
+ * EXTERNAL_MODEL_URL is a full inference endpoint (e.g. .../analyze-external),
+ * so derive the host origin and point /healthz at it — never append to the path.
+ */
+export function externalModelHealthUrl(): string {
+  return `${new URL(config.externalModel.url).origin}/healthz`;
+}
+
+/**
+ * Startup self-check: log, per configured agent EOA, whether it holds
+ * OPERATOR_ROLE on the relay. A missing grant means that agent silently uses
+ * Groq instead of the native path, so surfacing it at boot makes the gap obvious.
+ */
+export async function logAgentOperatorRoles(): Promise<void> {
+  if (!config.somniaAgents.relayAddress) {
+    log.info("OPERATOR_ROLE self-check skipped — SOMNIA_AGENT_RELAY_ADDRESS not set");
+    return;
+  }
+
+  const entries: { type: string; wallet: ethers.Wallet }[] = [];
+  if (config.agents.formPrivateKey) entries.push({ type: "Form", wallet: getFormAgentWallet() });
+  if (config.agents.prescriberPrivateKey) {
+    entries.push({ type: "Prescriber", wallet: getPrescriberWallet() });
+  }
+  if (externalModelConfigured()) {
+    entries.push({ type: "ExternalModel", wallet: getExternalAgentWallet() });
+  }
+
+  for (const { type, wallet } of entries) {
+    const has = await signerHasOperatorRole(wallet);
+    if (has) {
+      log.info(`OPERATOR_ROLE ✓ ${type} can use the native path`, { address: wallet.address });
+    } else {
+      log.warn(
+        `OPERATOR_ROLE ✗ ${type} not granted — will use Groq. ` +
+          `Grant with: npx hardhat run scripts/grant-operator-role.ts --network somniaTestnet`,
+        { address: wallet.address },
+      );
+    }
   }
 }
 
@@ -269,10 +315,22 @@ async function _ensureRegistered(opts: {
 
   if (already) {
     const agent = await reg.getAgent(wallet.address);
+    // Reactivate and fix a drifted endpoint independently, so one restart can do
+    // both (an inactive agent whose endpoint also moved is corrected in one run).
     if (!agent.active) {
       log.info(`${agentType} Agent inactive — re-activating`, { address: wallet.address });
       await (await (regWithSigner as any).setActive(true)).wait();
-    } else {
+    }
+    if (agent.endpoint !== endpoint) {
+      // Endpoint drifted (e.g. moved to the Koyeb engine) — push an update so
+      // the on-chain record matches the configured endpoint.
+      log.info(`${agentType} Agent endpoint changed — updating registration`, {
+        address: wallet.address,
+        from: agent.endpoint,
+        to: endpoint,
+      });
+      await (await (regWithSigner as any).update(name, endpoint, skills, feeWei)).wait();
+    } else if (agent.active) {
       log.info(`${agentType} Agent already registered`, { address: wallet.address });
     }
     return;

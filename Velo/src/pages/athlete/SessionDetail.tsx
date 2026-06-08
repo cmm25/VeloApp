@@ -170,6 +170,8 @@ export default function SessionDetail({ jobId }: { jobId: Hex }) {
             jobId={jobId}
             receipt={formReceipt}
             indexedEntry={indexed?.form ?? null}
+            jobCreatedAt={job.createdAt}
+            jobDeadline={job.deadline}
             placeholderTitle="Awaiting Form agent"
             placeholderHint="Your coach's Form agent will submit a signed receipt on-chain."
           />
@@ -180,6 +182,8 @@ export default function SessionDetail({ jobId }: { jobId: Hex }) {
             jobId={jobId}
             receipt={rxReceipt}
             indexedEntry={indexed?.prescription ?? null}
+            jobCreatedAt={job.createdAt}
+            jobDeadline={job.deadline}
             placeholderTitle="Awaiting Prescriber agent"
             placeholderHint="Your coach's Prescriber agent will submit a signed receipt on-chain."
           />

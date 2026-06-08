@@ -21,6 +21,7 @@ import {
   Database,
   Cpu,
   Zap,
+  BookOpen,
 } from "lucide-react";
 import { AgentStatusBadge } from "@/components/AgentStatusBadge";
 import { orchestratorAddress } from "@/hooks/useVeloContracts";
@@ -39,11 +40,22 @@ import {
   type ReceiptStruct,
 } from "@/lib/web3/eip712";
 import { ipfsGatewayUrl } from "@/lib/web3/uploader";
-import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
+import {
+  useIpfsJson,
+  somniaReceiptUrlFromJson,
+  techniqueReferenceFromJson,
+  type TechniqueReferenceView,
+} from "@/lib/web3/ipfs";
 import { type IndexedEntry, type AiProvenance } from "@/lib/web3/indexer";
 import { somniaTestnet } from "@/lib/web3/chain";
+import { deployment } from "@/lib/web3/deployment";
 import { veloOrchestratorAbi } from "@/lib/web3/abis";
-import { getRecentLogs } from "@/lib/web3/logs";
+import {
+  getRecentLogs,
+  getLogsChunked,
+  recentRangeForTimestamp,
+  blockWindowForInterval,
+} from "@/lib/web3/logs";
 import type { AbiEvent } from "viem";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
@@ -271,6 +283,8 @@ export function ReceiptStage({
   jobId,
   receipt,
   indexedEntry,
+  jobCreatedAt,
+  jobDeadline,
   placeholderTitle,
   placeholderHint,
 }: {
@@ -278,6 +292,14 @@ export function ReceiptStage({
   jobId: Hex;
   receipt: DecodedReceipt | null;
   indexedEntry: IndexedEntry | null;
+  /**
+   * The job's on-chain creation + deadline timestamps (unix seconds). Used to
+   * bound the on-chain signature scan to the job's lifetime when the indexer
+   * can't supply the signature — so "Verify signature" works for receipts of
+   * any age (the scanned window is the job's own duration, not its age).
+   */
+  jobCreatedAt?: bigint;
+  jobDeadline?: bigint;
   placeholderTitle: string;
   placeholderHint: string;
 }) {
@@ -286,6 +308,7 @@ export function ReceiptStage({
   const verifiedOk = verifyState.phase === "verified" && verifyState.ok;
   const ipfs = ipfsQuery.data ?? null;
   const ipfsSomniaReceiptUrl = somniaReceiptUrlFromJson(ipfs);
+  const techniqueRef = kind === "rx" ? techniqueReferenceFromJson(ipfs) : null;
   const nativeReceiptUrl =
     indexedEntry?.provenance?.path === "native"
       ? indexedEntry.provenance.somnia?.receiptUrl
@@ -354,6 +377,8 @@ export function ReceiptStage({
               />
             )}
 
+            <TechniqueReferencePanel reference={techniqueRef} />
+
             <SomniaProvenancePanel provenance={indexedEntry?.provenance ?? null} />
 
             <ReceiptIntegrityPanel
@@ -361,12 +386,73 @@ export function ReceiptStage({
               jobId={jobId}
               receipt={receipt}
               indexedEntry={indexedEntry}
+              jobCreatedAt={jobCreatedAt}
+              jobDeadline={jobDeadline}
               state={verifyState}
               setState={setVerifyState}
             />
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// Verified technique reference
+
+/**
+ * Shows the real coaching source the Prescriber grounded this plan in — fetched
+ * and consensus-verified on Somnia's Agentic L1 by the LLM Parse Website agent.
+ * Renders nothing unless a reference is present (graceful fallback).
+ */
+function TechniqueReferencePanel({
+  reference,
+}: {
+  reference: TechniqueReferenceView | null;
+}) {
+  if (!reference) return null;
+  let host: string | null = null;
+  if (reference.sourceUrl) {
+    try {
+      host = new URL(reference.sourceUrl).hostname.replace(/^www\./, "");
+    } catch {
+      host = null;
+    }
+  }
+  return (
+    <div className="mt-4 rounded-sm border border-amber/30 bg-amber/[0.04] p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <BookOpen className="w-4 h-4 text-amber" />
+        <span className="text-[10px] uppercase tracking-widest font-bold text-chalk/80">
+          Verified Technique Reference
+        </span>
+      </div>
+      <p className="text-sm text-chalk/90 leading-relaxed mb-3">{reference.tip}</p>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        {reference.sourceUrl && (
+          <a
+            href={reference.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+          >
+            {host ? `Source · ${host}` : "Source"} <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+        {reference.receiptUrl && (
+          <a
+            href={reference.receiptUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 text-[10px] font-mono text-amber hover:text-amber-soft"
+          >
+            View consensus receipt <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
+      </div>
+      <p className="mt-2 text-[10px] text-muted-foreground leading-relaxed">
+        Sourced &amp; consensus-verified on Somnia's Agentic L1 by the LLM Parse Website agent.
+      </p>
     </div>
   );
 }
@@ -467,6 +553,7 @@ type VerifyState =
   | { phase: "idle" }
   | { phase: "loading" }
   | { phase: "no-sig"; reason: string }
+  | { phase: "config-error"; reason: string }
   | { phase: "verified"; recovered: Address; signature: Hex; ok: boolean };
 
 function ReceiptIntegrityPanel({
@@ -474,6 +561,8 @@ function ReceiptIntegrityPanel({
   jobId,
   receipt,
   indexedEntry,
+  jobCreatedAt,
+  jobDeadline,
   state,
   setState,
 }: {
@@ -481,6 +570,8 @@ function ReceiptIntegrityPanel({
   jobId: Hex;
   receipt: DecodedReceipt;
   indexedEntry: IndexedEntry | null;
+  jobCreatedAt?: bigint;
+  jobDeadline?: bigint;
   state: VerifyState;
   setState: (s: VerifyState) => void;
 }) {
@@ -514,9 +605,43 @@ function ReceiptIntegrityPanel({
     summaryHashLocal && summaryHashLocal.toLowerCase() === receipt.summaryHash.toLowerCase();
 
   const runVerify = async () => {
-    if (!orch) return;
     setState({ phase: "loading" });
     try {
+      // Proactive orchestrator config sanity check. The EIP-712 domain binds the
+      // verifying contract + chainId, so a stale/mismatched deployment makes
+      // every recovery resolve to the wrong signer. Catch that here and surface
+      // it as a distinct "config drift" state — instead of either silently
+      // no-op'ing (missing config) or letting it masquerade as a signature
+      // mismatch later.
+      if (!deployment) {
+        setState({ phase: "config-error", reason: "No deployment configured in this build." });
+        return;
+      }
+      if (deployment.chainId !== somniaTestnet.id) {
+        setState({
+          phase: "config-error",
+          reason: `Deployment is for chain ${deployment.chainId}, but this app targets chain ${somniaTestnet.id}.`,
+        });
+        return;
+      }
+      if (!orch) {
+        setState({
+          phase: "config-error",
+          reason: "Deployment has no orchestrator address configured.",
+        });
+        return;
+      }
+      if (client) {
+        const code = await client.getBytecode({ address: orch });
+        if (!code || code === "0x") {
+          setState({
+            phase: "config-error",
+            reason: `No orchestrator contract found at ${shortAddr(orch, 6, 6)} on chain ${somniaTestnet.id} — the configured deployment looks stale.`,
+          });
+          return;
+        }
+      }
+
       // Prefer the indexer signature when the api-server has it — that's the
       // whole point of the indexer: no chain log walk needed.
       let signature: Hex | null = indexedEntry?.signature ?? null;
@@ -534,19 +659,43 @@ function ReceiptIntegrityPanel({
           setState({ phase: "no-sig", reason: "Event ABI missing" });
           return;
         }
-        // Somnia caps `eth_getLogs` at 1000-block windows; scan a bounded recent
-        // window (the indexer signature is the fast path — this only runs when it
-        // isn't available). A miss here means "not found in the recent window",
-        // surfaced clearly rather than as a silent empty.
-        const logs = (await getRecentLogs(client, {
-          address: orch,
-          event: event as AbiEvent,
-          args: { jobId },
-        })) as Array<{ transactionHash: Hex | null }>;
+        // Somnia caps `eth_getLogs` at 1000-block windows (the indexer signature
+        // is the fast path — this only runs when it isn't available). Bound the
+        // scan to the job's *lifetime* (createdAt → deadline) so the scanned
+        // width is the session's own duration, not its age — older receipts
+        // still resolve, and the work stays cheap regardless of age. Falls back
+        // progressively when those timestamps aren't known. A miss is surfaced
+        // clearly rather than as a silent empty.
+        const scan = (fromBlock: bigint, toBlock: bigint) =>
+          getLogsChunked(client, {
+            address: orch,
+            event: event as AbiEvent,
+            args: { jobId },
+            fromBlock,
+            toBlock,
+          });
+        let logs: Array<{ transactionHash: Hex | null }>;
+        if (jobCreatedAt && jobDeadline) {
+          const { fromBlock, toBlock } = await blockWindowForInterval(
+            client,
+            jobCreatedAt,
+            jobDeadline,
+          );
+          logs = (await scan(fromBlock, toBlock)) as Array<{ transactionHash: Hex | null }>;
+        } else if (jobCreatedAt) {
+          const { fromBlock, toBlock } = await recentRangeForTimestamp(client, jobCreatedAt);
+          logs = (await scan(fromBlock, toBlock)) as Array<{ transactionHash: Hex | null }>;
+        } else {
+          logs = (await getRecentLogs(client, {
+            address: orch,
+            event: event as AbiEvent,
+            args: { jobId },
+          })) as Array<{ transactionHash: Hex | null }>;
+        }
         if (logs.length === 0) {
           setState({
             phase: "no-sig",
-            reason: "No recent submission log on chain",
+            reason: "No submission log found on chain for this receipt",
           });
           return;
         }
@@ -671,6 +820,29 @@ function ReceiptIntegrityPanel({
               <span className="text-chalk">{shortAddr(receipt.agent, 6, 6)}</span>
             </div>
             <div className="text-chalk/50 mt-1 break-all">sig {shortAddr(state.signature, 10, 8)}</div>
+            {!state.ok && (
+              <div className="text-destructive/80 mt-2 leading-relaxed normal-case font-sans text-[10px]">
+                The signature is valid but recovers a different signer than the
+                receipt claims. This usually means the receipt was signed for a
+                different orchestrator deployment than the one this app is
+                pointed at (a redeploy / stale config), not a forged receipt.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {state.phase === "config-error" && (
+        <div className="flex items-start gap-2 p-3 rounded-sm border border-destructive/40 bg-destructive/5 text-destructive">
+          <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="text-[11px] font-mono leading-relaxed">
+            <div className="font-bold uppercase tracking-wider mb-1">
+              Orchestrator config drift
+            </div>
+            <div className="text-chalk/80 normal-case font-sans text-[10px] leading-relaxed">
+              {state.reason} Verification can't be trusted until this app points at
+              the active deployment — recovered signers would be meaningless.
+            </div>
           </div>
         </div>
       )}

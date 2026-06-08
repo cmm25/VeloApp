@@ -182,9 +182,15 @@ async function main() {
   contracts.reputation = repAddr;
 
   /* 6. BountyExtension */
+  // Set FORCE_REDEPLOY_BOUNTY=1 to redeploy BountyExtension even when a healthy
+  // one is recorded — the source changed (strict expiry) but the constructor
+  // args (registry/reputation/sbt) did not, so the bytecode check below would
+  // otherwise reuse the stale contract. A fresh deploy also resets bounty history.
+  const forceRedeployBounty = process.env.FORCE_REDEPLOY_BOUNTY === "1";
   const minBountyFee = parseFee(process.env.MIN_BOUNTY_FEE_STT);
-  let bountyAddr = contracts.bountyExtension && (await hasBytecode(contracts.bountyExtension))
+  let bountyAddr = !forceRedeployBounty && contracts.bountyExtension && (await hasBytecode(contracts.bountyExtension))
     ? contracts.bountyExtension : undefined;
+  if (forceRedeployBounty) console.log("FORCE_REDEPLOY_BOUNTY=1 → redeploying BountyExtension");
 
   if (bountyAddr) {
     try {

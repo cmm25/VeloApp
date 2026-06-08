@@ -5,46 +5,34 @@ import { makeLogger } from "../utils/logger.js";
 const log = makeLogger("somnia-agents");
 
 /**
- * Somnia native Agentic L1 client (relay path).
- *
- * Invokes Somnia's native agents through the `VeloAgentRelay` contract, which in
- * turn drives the `SomniaAgents` platform (IAgentRequester).
+ * Somnia native Agentic L1 client (relay path). Invokes Somnia's native agents
+ * through the `VeloAgentRelay` contract, which drives the `SomniaAgents`
+ * platform (IAgentRequester).
  *
  * Why a relay is required: the platform delivers an agent's consensus result
  * ONLY to the requester's on-chain `handleResponse` callback, then deletes the
- * request and discards the result (verified on-chain — the finalize tx emits
- * only `RequestFinalized(id,status)` + `SubcommitteePaid(...)`, never the result
+ * request and discards the result (the finalize tx emits only
+ * `RequestFinalized(id,status)` + `SubcommitteePaid(...)`, never the result
  * bytes). An off-chain EOA has no callback, so its result is always lost and the
  * spent STT is wasted. The relay IS the callback: it captures the result and
  * re-emits it as a permanent `ResultReady` log we can read back.
  *
- * Flow (per request):
- *   1. `relay.request(agentId, payload)` payable — forwards a correctly sized
- *      deposit to `platform.createRequest` with the relay as the callback:
- *        deposit = getRequestDeposit() (operations-reserve floor)
- *                + pricePerAgent × subcommitteeSize (agent reward pot)
- *      The reward pot MUST clear the runner's per-agent price for the agent type
- *      (LLM Inference = 0.07 STT today) or runners skip the request and it
- *      times out. See docs.somnia.network/agents/invoking-agents/gas-fees.
- *   2. recover the requestId from the relay's `RelayRequestCreated` event.
- *   3. wait for the relay's `ResultReady(requestId, status, result)` event
- *      (bounded by our local timeout) — permanent and race-free, unlike polling
- *      the soon-to-be-deleted Request struct.
- *   4. decode the consensus result bytes.
+ * Funding gotcha: the deposit's reward pot (pricePerAgent × subcommitteeSize)
+ * MUST clear the runner's per-agent price (LLM Inference = 0.07 STT today) or
+ * runners skip the request and it times out. See
+ * docs.somnia.network/agents/invoking-agents/gas-fees.
  *
- * Every result carries the on-chain requestId + receipt URL so the provenance is
- * auditable and linkable on the Somnia agent explorer. Any timeout / failure /
- * unavailability throws `SomniaAgentsUnavailable` so the caller falls back to
- * the off-chain Groq path cleanly.
+ * Any timeout / failure / unavailability throws `SomniaAgentsUnavailable` so the
+ * caller falls back to the off-chain Groq path cleanly.
  */
-
-// ABIs
 
 // VeloAgentRelay — our on-chain relay (see Hardhat/contracts/VeloAgentRelay.sol).
 const RELAY_ABI = [
   "function request(uint256 agentId, bytes payload) payable returns (uint256 requestId)",
   "function getRequestDeposit() view returns (uint256)",
   "function getResult(uint256 requestId) view returns (bool ready, uint8 status)",
+  "function OPERATOR_ROLE() view returns (bytes32)",
+  "function hasRole(bytes32 role, address account) view returns (bool)",
   "event RelayRequestCreated(uint256 indexed requestId, uint256 indexed agentId, address indexed operator)",
   "event ResultReady(uint256 indexed requestId, uint8 status, bytes result)",
 ] as const;
@@ -62,6 +50,14 @@ const LLM_AGENT_ABI = [
 // its ABI is verified against the agent explorer.
 const JSON_API_AGENT_ABI = [
   "function request(string url, string jsonPath) returns (string)",
+] as const;
+
+// LLM Parse Website agent — `ExtractString(key, description, options, prompt,
+// url, resolveUrl, numPages, confidenceThreshold)` scrapes a real URL and
+// returns one extracted string. Verified against the agent explorer + docs
+// (id 12875401142070969085, docs.somnia.network/agents/base-agents/llm-parse-website).
+const PARSE_WEBSITE_AGENT_ABI = [
+  "function ExtractString(string key, string description, string[] options, string prompt, string url, bool resolveUrl, uint8 numPages, uint8 confidenceThreshold) returns (string output)",
 ] as const;
 
 // Mirrors ISomniaAgents.ResponseStatus
@@ -113,6 +109,54 @@ export function nativeAgentsConfigured(): boolean {
     !!config.somniaAgents.llmAgentId &&
     config.somniaAgents.llmAgentId !== "0"
   );
+}
+
+/**
+ * True when the LLM Parse Website path is configured. Mirrors
+ * `nativeAgentsConfigured` but keyed on the parse-website agent id, so the
+ * verified-technique reference stays inert until explicitly enabled.
+ */
+export function parseWebsiteConfigured(): boolean {
+  return (
+    config.somniaAgents.enabled &&
+    !!config.somniaAgents.contract &&
+    !!config.somniaAgents.relayAddress &&
+    !!config.somniaAgents.parseWebsiteAgentId &&
+    config.somniaAgents.parseWebsiteAgentId !== "0"
+  );
+}
+
+// Per-signer cache of OPERATOR_ROLE membership on the relay. A wallet's grant
+// status is effectively static for a runner's lifetime, so we check once and
+// reuse it instead of paying an RPC round-trip (and risking a revert) per job.
+const _operatorRoleCache = new Map<string, boolean>();
+
+/**
+ * Whether `signer` holds OPERATOR_ROLE on the relay (cached). The relay's
+ * `request(...)` is `onlyRole(OPERATOR_ROLE)`, so a wallet without the role
+ * makes every native call revert `AccessControlUnauthorizedAccount`. Checking
+ * first lets the caller skip straight to Groq with one clear warning instead of
+ * eating a gas-estimation revert on every request. Returns false (skip native)
+ * when the relay is unset or the check itself fails.
+ */
+export async function signerHasOperatorRole(signer: ethers.Wallet): Promise<boolean> {
+  if (!config.somniaAgents.relayAddress) return false;
+  const key = signer.address.toLowerCase();
+  const cached = _operatorRoleCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const relay = getRelayContract(signer);
+    const role = await relay.OPERATOR_ROLE();
+    const has = Boolean(await relay.hasRole(role, signer.address));
+    _operatorRoleCache.set(key, has);
+    return has;
+  } catch (err) {
+    log.warn("OPERATOR_ROLE check failed — assuming not granted (will use Groq)", {
+      address: signer.address,
+      error: errMsg(err),
+    });
+    return false;
+  }
 }
 
 function statusName(s: number): string {
@@ -182,7 +226,44 @@ export async function runJsonApiRequest(
   return dispatchRequest(config.somniaAgents.jsonApiAgentId, payload, signer, "string");
 }
 
-// Core request lifecycle
+/**
+ * Run an LLM Parse Website request through Somnia's native agent (via the relay).
+ * Scrapes the given real source URL and extracts a single coaching tip, returning
+ * the consensus output plus its auditable receipt. Throws `SomniaAgentsUnavailable`
+ * on any timeout / unavailability so callers can skip the reference cleanly.
+ */
+export async function runParseWebsite(
+  prompt: string,
+  url: string,
+  signer: ethers.Wallet
+): Promise<SomniaAgentResult> {
+  if (!parseWebsiteConfigured()) {
+    throw new SomniaAgentsUnavailable(
+      "Somnia parse-website agent not configured (set SOMNIA_AGENT_RELAY_ADDRESS and SOMNIA_PARSE_WEBSITE_AGENT_ID)"
+    );
+  }
+  // Scrape tuning is configurable (see config.somniaAgents.parseWebsite*). The
+  // defaults resolve/search from the source over a small page budget at a low
+  // confidence threshold, so a specific diagnosed fault yields a tip instead of
+  // being skipped — a single static page at a high threshold rarely matched.
+  const resolveUrl = config.somniaAgents.parseWebsiteResolveUrl;
+  const numPages = config.somniaAgents.parseWebsiteNumPages;
+  const confidenceThreshold = config.somniaAgents.parseWebsiteConfidenceThreshold;
+  const payload = new ethers.Interface([...PARSE_WEBSITE_AGENT_ABI]).encodeFunctionData(
+    "ExtractString",
+    [
+      "tip",
+      "A concise, actionable tennis coaching tip",
+      [],
+      prompt,
+      url,
+      resolveUrl,
+      numPages,
+      confidenceThreshold,
+    ]
+  );
+  return dispatchRequest(config.somniaAgents.parseWebsiteAgentId, payload, signer, "string");
+}
 
 async function dispatchRequest(
   agentId: string,
@@ -215,18 +296,42 @@ async function dispatchRequest(
     );
   }
   const reward = pricePerAgent * subSize;
-  const deposit = reserve + reward;
+  const computed = reserve + reward;
+  // Absolute floor safety net: getRequestDeposit() is ONLY the ops reserve and
+  // does not include an agent's own price floor. If an agent's real on-chain
+  // requirement ever exceeds our computed sizing, SOMNIA_AGENTS_MIN_DEPOSIT_WEI
+  // lifts the deposit to meet it (unused amount is rebated to the relay).
+  let minTotal = 0n;
+  try {
+    minTotal = BigInt(config.somniaAgents.minDepositWei || "0");
+  } catch {
+    minTotal = 0n;
+  }
+  const deposit = computed > minTotal ? computed : minTotal;
   const perAgentBudget = subSize > 0n ? reward / subSize : 0n;
 
+  // platformRequiredWei is what the platform actually enforces at request time
+  // (the getRequestDeposit() reserve floor) — log it next to the final deposit so
+  // any future underfunding is visible at a glance, not buried in a bare revert.
   log.info("Creating Somnia agent request via relay", {
     agentId,
     relay: config.somniaAgents.relayAddress,
     subSize: subSize.toString(),
-    reserveWei: reserve.toString(),
+    platformRequiredWei: reserve.toString(),
     rewardWei: reward.toString(),
+    computedDepositWei: computed.toString(),
+    minDepositWei: minTotal.toString(),
     depositWei: deposit.toString(),
     perAgentBudgetWei: perAgentBudget.toString(),
   });
+  if (deposit < reserve) {
+    // Defensive: should be impossible (computed already includes reserve), but a
+    // misconfigured min must never drop below the platform floor.
+    throw new SomniaAgentsUnavailable(
+      `final deposit ${deposit} is below the platform's required floor ${reserve} — ` +
+        `check SOMNIA_AGENTS_MIN_DEPOSIT_WEI`
+    );
+  }
   if (perAgentBudget === 0n) {
     log.warn(
       "perAgentBudget is 0 — runners will skip this request. Raise SOMNIA_AGENTS_PRICE_PER_AGENT_WEI."

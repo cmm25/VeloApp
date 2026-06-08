@@ -260,6 +260,8 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         Bounty storage b = _bounties[bountyId];
         if (b.status == BountyStatus.None) revert BountyNotFound();
         if (b.status != BountyStatus.Accepted) revert BountyNotAccepted();
+        // Strict expiry: no settlement once the deadline has passed.
+        if (block.timestamp >= b.deadline) revert DeadlinePassed();
         require(subReceipts.length == subSigs.length, "length mismatch");
 
         bytes32 expectedJobId = bytes32(bountyId);
@@ -340,10 +342,16 @@ contract BountyExtension is EIP712, ReentrancyGuard {
         );
     }
 
+    /// @notice Strict expiry: once the deadline passes an Open *or* Accepted
+    ///         bounty can be expired, refunding the remaining escrow to the
+    ///         poster. Accepted-but-unsettled bounties are refundable too — the
+    ///         lead agent missed the deadline, so there is no late settlement.
     function expireBounty(uint256 bountyId) external nonReentrant {
         Bounty storage b = _bounties[bountyId];
         if (b.status == BountyStatus.None) revert BountyNotFound();
-        if (b.status != BountyStatus.Open) revert BountyNotOpen();
+        if (b.status != BountyStatus.Open && b.status != BountyStatus.Accepted) {
+            revert BountyNotOpen();
+        }
         if (block.timestamp < b.deadline) revert DeadlineNotReached();
         uint256 amount = b.escrow;
         if (amount == 0) revert EmptyEscrow();
