@@ -271,3 +271,26 @@ export function catalogVisionSkills(): Hex[] {
 export function skillLabel(skill: Hex): string {
   return KNOWN_SKILLS[skill.toLowerCase()] ?? `${skill.slice(0, 10)}…`;
 }
+
+/**
+ * Display URL for an agent's on-chain endpoint. Real http(s) endpoints (Render,
+ * Koyeb, etc.) are shown exactly as registered — never rewritten. Only in local
+ * dev do we remap a `localhost` endpoint to the dev agent host as a convenience;
+ * in production we never fabricate a host, so the UI faithfully shows whatever
+ * is registered on-chain.
+ */
+export function normalizeEndpointUrl(endpoint: string): string {
+  if (import.meta.env.DEV && /localhost/.test(endpoint)) {
+    return endpoint.replace(
+      /https?:\/\/localhost(:\d+)?/,
+      "https://veloapp-agents.onrender.com",
+    );
+  }
+  return endpoint;
+}
+
+/** Health-check URL (`/healthz`) derived from an agent's registered endpoint. */
+export function agentHealthUrl(endpoint: string): string {
+  const base = normalizeEndpointUrl(endpoint).replace(/\/+$/, "");
+  return `${base}/healthz`;
+}

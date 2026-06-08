@@ -6,6 +6,8 @@ import {
   useReputation,
   useAgentActivity,
   skillLabel,
+  normalizeEndpointUrl,
+  agentHealthUrl,
 } from "@/lib/domain/agents";
 import { formatStt } from "@/lib/format";
 import {
@@ -16,28 +18,6 @@ import {
   ExternalLink,
   Activity,
 } from "lucide-react";
-
-/**
- * Normalize agent endpoint URLs for production deployment.
- * Converts localhost URLs to production URLs.
- */
-function normalizeEndpointUrl(endpoint: string): string {
-  // Replace localhost:3001 with production agent URL
-  if (endpoint.includes("localhost:3001")) {
-    return endpoint.replace("localhost:3001", "veloapp-agents.onrender.com");
-  }
-  // Also handle variations like http://localhost:3001
-  if (endpoint.includes("localhost")) {
-    return endpoint.replace(/http:\/\/localhost:\d+/, "https://veloapp-agents.onrender.com");
-  }
-  return endpoint;
-}
-
-// Health-check URL for the registered endpoint (its `/healthz` path).
-function healthUrl(endpoint: string): string {
-  const base = normalizeEndpointUrl(endpoint).replace(/\/+$/, "");
-  return `${base}/healthz`;
-}
 
 export default function AgentProfile({ address: addrParam }: { address: string }) {
   const valid = isAddress(addrParam);
@@ -152,7 +132,7 @@ export default function AgentProfile({ address: addrParam }: { address: string }
                 <ExternalLink className="w-3 h-3 shrink-0" />
               </a>
               <a
-                href={healthUrl(agent.endpoint)}
+                href={agentHealthUrl(agent.endpoint)}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground hover:text-amber w-fit"
