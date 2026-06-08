@@ -7,7 +7,6 @@ import {
   useAgentActivity,
   skillLabel,
   normalizeEndpointUrl,
-  agentHealthUrl,
 } from "@/lib/domain/agents";
 import { formatStt } from "@/lib/format";
 import {
@@ -129,15 +128,6 @@ export default function AgentProfile({ address: addrParam }: { address: string }
                 className="inline-flex items-center gap-2 font-mono text-xs text-amber hover:text-amber-soft break-all"
               >
                 {normalizeEndpointUrl(agent.endpoint)}
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </a>
-              <a
-                href={agentHealthUrl(agent.endpoint)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground hover:text-amber w-fit"
-              >
-                Health check · /healthz
                 <ExternalLink className="w-3 h-3 shrink-0" />
               </a>
             </div>
