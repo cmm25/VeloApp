@@ -22,6 +22,7 @@ import { ShieldCheck, Clock, AlertTriangle, ArrowLeft } from "lucide-react";
 import { CompositionTree, type CompositionNode } from "@/components/CompositionTree";
 import { ReceiptStage, Stage, Row, decodeReceipt } from "@/components/session/ReceiptStage";
 import { TelemetryPreview } from "@/components/session/TelemetryPreview";
+import { IndexerSourceBadge } from "@/components/IndexerSourceBadge";
 import { useIpfsJson, somniaReceiptUrlFromJson } from "@/lib/web3/ipfs";
 
 export default function JobDetail({ jobId }: { jobId: Hex }) {
@@ -129,8 +130,11 @@ export default function JobDetail({ jobId }: { jobId: Hex }) {
               )}
             </div>
           </div>
-          <div className="px-3 py-1.5 bg-card border border-border/50 rounded-sm font-mono text-[11px] text-chalk/80 shrink-0">
-            {shortAddr(jobId, 8, 8)}
+          <div className="flex flex-col items-start md:items-end gap-2 shrink-0">
+            <div className="px-3 py-1.5 bg-card border border-border/50 rounded-sm font-mono text-[11px] text-chalk/80">
+              {shortAddr(jobId, 8, 8)}
+            </div>
+            <IndexerSourceBadge source="indexer" />
           </div>
         </div>
 
