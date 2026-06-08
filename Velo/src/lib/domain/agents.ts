@@ -29,9 +29,15 @@ export type ReputationStats = {
   rollingScore: bigint;
 };
 
-// Tiebreak between two registrations of the same logical agent.
-function preferAgent(a: AgentRecord, b: AgentRecord): boolean {
-  if (a.active !== b.active) return a.active;
+// Pick the canonical agent between two registrations of the same role: higher
+// on-chain reputation wins, then the most recently registered (rotated) key.
+function preferAgent(
+  a: AgentRecord,
+  aScore: bigint,
+  b: AgentRecord,
+  bScore: bigint,
+): boolean {
+  if (aScore !== bScore) return aScore > bScore;
   return a.registeredAt > b.registeredAt;
 }
 
@@ -54,6 +60,7 @@ function decodeAgent(addr: Address, raw: unknown): AgentRecord | null {
 /** List every registered agent in the on-chain registry. */
 export function useRegisteredAgents() {
   const reg = agentRegistryAddress();
+  const rep = reputationAddress();
   const listQ = useReadContract({
     address: reg ?? undefined,
     abi: agentRegistryAbi,
@@ -70,36 +77,57 @@ export function useRegisteredAgents() {
     })),
     query: { enabled: !!reg && addresses.length > 0 },
   });
-  const agents = useMemo<AgentRecord[]>(() => {
+  // Only active, existing agents are eligible for the directory.
+  const activeRecords = useMemo<AgentRecord[]>(() => {
     if (!detailsQ.data) return [];
-    const all: AgentRecord[] = [];
+    const out: AgentRecord[] = [];
     detailsQ.data.forEach((res, i) => {
       if (res.status === "success") {
         const a = decodeAgent(addresses[i]!, res.result);
-        if (a && a.exists) all.push(a);
+        if (a && a.exists && a.active) out.push(a);
       }
     });
-    // Collapse duplicate registrations of the same logical agent — same name,
-    // endpoint and skill set, registered under rotated keys. Including the
-    // endpoint avoids merging genuinely distinct agents that only share branding.
-    const byIdentity = new Map<string, AgentRecord>();
-    for (const a of all) {
-      const key = [
-        a.name.trim().toLowerCase(),
-        a.endpoint.trim().toLowerCase(),
-        a.skills.map((s) => s.toLowerCase()).sort().join(","),
-      ].join("|");
-      const cur = byIdentity.get(key);
-      if (!cur || preferAgent(a, cur)) byIdentity.set(key, a);
-    }
-    return Array.from(byIdentity.values());
+    return out;
   }, [detailsQ.data, addresses]);
+  // Reputation for the active agents — used to pick the canonical one when the
+  // same role was registered under several (rotated) keys.
+  const repQ = useReadContracts({
+    contracts: activeRecords.map((a) => ({
+      address: rep!,
+      abi: reputationAbi,
+      functionName: "statsOf" as const,
+      args: [a.address] as const,
+    })),
+    query: { enabled: !!rep && activeRecords.length > 0 },
+  });
+  const agents = useMemo<AgentRecord[]>(() => {
+    const scoreOf = (i: number): bigint => {
+      const r = repQ.data?.[i];
+      if (r && r.status === "success" && r.result && typeof r.result === "object") {
+        return ((r.result as Record<string, unknown>).rollingScore as bigint) ?? 0n;
+      }
+      return 0n;
+    };
+    // Dedupe by role (the agent's skill set): keep one agent per role, preferring
+    // the highest on-chain reputation, then the most recently registered key.
+    const byRole = new Map<string, { rec: AgentRecord; score: bigint }>();
+    activeRecords.forEach((a, i) => {
+      const key = a.skills.map((s) => s.toLowerCase()).sort().join(",");
+      const score = scoreOf(i);
+      const cur = byRole.get(key);
+      if (!cur || preferAgent(a, score, cur.rec, cur.score)) {
+        byRole.set(key, { rec: a, score });
+      }
+    });
+    return Array.from(byRole.values()).map((v) => v.rec);
+  }, [activeRecords, repQ.data]);
   return {
     agents,
-    isLoading: listQ.isLoading || detailsQ.isLoading,
+    isLoading: listQ.isLoading || detailsQ.isLoading || repQ.isLoading,
     refetch: () => {
       listQ.refetch();
       detailsQ.refetch();
+      repQ.refetch();
     },
   };
 }
