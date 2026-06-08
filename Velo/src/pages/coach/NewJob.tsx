@@ -1127,7 +1127,7 @@ export default function NewJob() {
                   value={
                     <span className="inline-flex items-center gap-1 font-mono text-xs text-chalk/80">
                       <Clock className="w-3 h-3 text-amber/70" />
-                      {mode === "bounty" ? bountyDeadlineHours : DEADLINE_HOURS}h from signing
+                      {mode === "bounty" ? bountyDeadlineHours : directDeadlineHours}h from signing
                     </span>
                   }
                 />

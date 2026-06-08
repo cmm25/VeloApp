@@ -199,9 +199,16 @@ function AgentCard({ agent }: { agent: AgentRecord }) {
 }
 
 // Open a URL in a new tab without triggering the wrapping card navigation.
+// Guard the protocol so malformed registry data can't yield javascript:/data: links.
 function openExternal(e: React.MouseEvent, url: string) {
   e.preventDefault();
   e.stopPropagation();
+  try {
+    const { protocol } = new URL(url);
+    if (protocol !== "http:" && protocol !== "https:") return;
+  } catch {
+    return;
+  }
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
