@@ -6,11 +6,13 @@ import {
   useRegisteredAgents,
   useReputation,
   skillLabel,
+  normalizeEndpointUrl,
+  agentHealthUrl,
   type AgentRecord,
 } from "@/lib/domain/agents";
 import { shortAddr, formatStt } from "@/lib/format";
 import { EmptyState, CardSkeleton } from "@/components/ui/states";
-import { Bot, ShieldCheck, ShieldOff, Activity } from "lucide-react";
+import { Bot, ShieldCheck, ShieldOff, Activity, ExternalLink, HeartPulse } from "lucide-react";
 
 export default function AgentsDirectory() {
   const { agents, isLoading } = useRegisteredAgents();
@@ -168,8 +170,49 @@ function AgentCard({ agent }: { agent: AgentRecord }) {
           last {timeUntilPast(stats.lastActivity)}
         </div>
       )}
+
+      {agent.endpoint && (
+        <div className="mt-3 pt-3 border-t border-border/40 flex items-center justify-between gap-2">
+          {/* Buttons (not nested <a>) so the wrapping card Link stays valid. */}
+          <button
+            type="button"
+            onClick={(e) => openExternal(e, normalizeEndpointUrl(agent.endpoint))}
+            title={normalizeEndpointUrl(agent.endpoint)}
+            className="inline-flex items-center gap-1.5 font-mono text-[10px] text-muted-foreground hover:text-amber min-w-0"
+          >
+            <ExternalLink className="w-3 h-3 shrink-0" />
+            <span className="truncate">{prettyHost(agent.endpoint)}</span>
+          </button>
+          <button
+            type="button"
+            onClick={(e) => openExternal(e, agentHealthUrl(agent.endpoint))}
+            title="Open /healthz"
+            className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground hover:text-amber shrink-0"
+          >
+            <HeartPulse className="w-3 h-3" />
+            /healthz
+          </button>
+        </div>
+      )}
     </Link>
   );
+}
+
+// Open a URL in a new tab without triggering the wrapping card navigation.
+function openExternal(e: React.MouseEvent, url: string) {
+  e.preventDefault();
+  e.stopPropagation();
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
+// Host (or trimmed URL) for compact display on the directory card.
+function prettyHost(endpoint: string): string {
+  const url = normalizeEndpointUrl(endpoint);
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
 }
 
 function Stat({ label, value }: { label: string; value: string }) {
