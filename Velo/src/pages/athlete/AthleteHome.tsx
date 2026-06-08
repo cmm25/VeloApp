@@ -221,15 +221,18 @@ export default function AthleteHome() {
                 <Field label="Description" value={metadata.description} />
               )}
               {Array.isArray((metadata as any).attributes) &&
-                ((metadata as any).attributes as Array<{ trait_type?: string; value?: unknown }>).map(
-                  (a, i) => (
-                    <Field
-                      key={i}
-                      label={a.trait_type ?? `attr ${i}`}
-                      value={String(a.value ?? "—")}
-                    />
-                  ),
-                )}
+                ((metadata as any).attributes as Array<{ trait_type?: string; value?: unknown }>)
+                  // Drop malformed entries so we never render "attr 0" / "—".
+                  .filter(
+                    (a) =>
+                      typeof a?.trait_type === "string" &&
+                      a.trait_type.trim() &&
+                      a.value != null &&
+                      String(a.value).trim(),
+                  )
+                  .map((a, i) => (
+                    <Field key={i} label={a.trait_type!} value={String(a.value)} />
+                  ))}
             </div>
           </section>
         )}

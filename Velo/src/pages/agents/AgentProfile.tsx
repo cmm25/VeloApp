@@ -33,6 +33,12 @@ function normalizeEndpointUrl(endpoint: string): string {
   return endpoint;
 }
 
+// Health-check URL for the registered endpoint (its `/healthz` path).
+function healthUrl(endpoint: string): string {
+  const base = normalizeEndpointUrl(endpoint).replace(/\/+$/, "");
+  return `${base}/healthz`;
+}
+
 export default function AgentProfile({ address: addrParam }: { address: string }) {
   const valid = isAddress(addrParam);
   const address = valid ? (addrParam as Address) : undefined;
@@ -135,15 +141,26 @@ export default function AgentProfile({ address: addrParam }: { address: string }
             <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
               Endpoint
             </h2>
-            <a
-              href={normalizeEndpointUrl(agent.endpoint)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 font-mono text-xs text-amber hover:text-amber-soft break-all"
-            >
-              {normalizeEndpointUrl(agent.endpoint)}
-              <ExternalLink className="w-3 h-3 shrink-0" />
-            </a>
+            <div className="flex flex-col gap-2">
+              <a
+                href={normalizeEndpointUrl(agent.endpoint)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 font-mono text-xs text-amber hover:text-amber-soft break-all"
+              >
+                {normalizeEndpointUrl(agent.endpoint)}
+                <ExternalLink className="w-3 h-3 shrink-0" />
+              </a>
+              <a
+                href={healthUrl(agent.endpoint)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground hover:text-amber w-fit"
+              >
+                Health check · /healthz
+                <ExternalLink className="w-3 h-3 shrink-0" />
+              </a>
+            </div>
           </section>
         )}
 
