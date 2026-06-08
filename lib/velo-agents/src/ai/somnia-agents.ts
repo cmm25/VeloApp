@@ -5,40 +5,26 @@ import { makeLogger } from "../utils/logger.js";
 const log = makeLogger("somnia-agents");
 
 /**
- * Somnia native Agentic L1 client (relay path).
- *
- * Invokes Somnia's native agents through the `VeloAgentRelay` contract, which in
- * turn drives the `SomniaAgents` platform (IAgentRequester).
+ * Somnia native Agentic L1 client (relay path). Invokes Somnia's native agents
+ * through the `VeloAgentRelay` contract, which drives the `SomniaAgents`
+ * platform (IAgentRequester).
  *
  * Why a relay is required: the platform delivers an agent's consensus result
  * ONLY to the requester's on-chain `handleResponse` callback, then deletes the
- * request and discards the result (verified on-chain — the finalize tx emits
- * only `RequestFinalized(id,status)` + `SubcommitteePaid(...)`, never the result
+ * request and discards the result (the finalize tx emits only
+ * `RequestFinalized(id,status)` + `SubcommitteePaid(...)`, never the result
  * bytes). An off-chain EOA has no callback, so its result is always lost and the
  * spent STT is wasted. The relay IS the callback: it captures the result and
  * re-emits it as a permanent `ResultReady` log we can read back.
  *
- * Flow (per request):
- *   1. `relay.request(agentId, payload)` payable — forwards a correctly sized
- *      deposit to `platform.createRequest` with the relay as the callback:
- *        deposit = getRequestDeposit() (operations-reserve floor)
- *                + pricePerAgent × subcommitteeSize (agent reward pot)
- *      The reward pot MUST clear the runner's per-agent price for the agent type
- *      (LLM Inference = 0.07 STT today) or runners skip the request and it
- *      times out. See docs.somnia.network/agents/invoking-agents/gas-fees.
- *   2. recover the requestId from the relay's `RelayRequestCreated` event.
- *   3. wait for the relay's `ResultReady(requestId, status, result)` event
- *      (bounded by our local timeout) — permanent and race-free, unlike polling
- *      the soon-to-be-deleted Request struct.
- *   4. decode the consensus result bytes.
+ * Funding gotcha: the deposit's reward pot (pricePerAgent × subcommitteeSize)
+ * MUST clear the runner's per-agent price (LLM Inference = 0.07 STT today) or
+ * runners skip the request and it times out. See
+ * docs.somnia.network/agents/invoking-agents/gas-fees.
  *
- * Every result carries the on-chain requestId + receipt URL so the provenance is
- * auditable and linkable on the Somnia agent explorer. Any timeout / failure /
- * unavailability throws `SomniaAgentsUnavailable` so the caller falls back to
- * the off-chain Groq path cleanly.
+ * Any timeout / failure / unavailability throws `SomniaAgentsUnavailable` so the
+ * caller falls back to the off-chain Groq path cleanly.
  */
-
-// ABIs
 
 // VeloAgentRelay — our on-chain relay (see Hardhat/contracts/VeloAgentRelay.sol).
 const RELAY_ABI = [
@@ -278,8 +264,6 @@ export async function runParseWebsite(
   );
   return dispatchRequest(config.somniaAgents.parseWebsiteAgentId, payload, signer, "string");
 }
-
-// Core request lifecycle
 
 async function dispatchRequest(
   agentId: string,

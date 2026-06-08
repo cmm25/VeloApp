@@ -24,16 +24,8 @@ import type { JobEvent } from "../chain/abi.js";
 const log = makeLogger("form-agent");
 
 /**
- * FormAgent — triggered by JobRequested events.
- *
- * Flow:
- *   1. Resolve video URL from videoCid (IPFS gateway or null for local CID)
- *   2. Call velo-engine POST /analyze → TennisTelemetry
- *   3. Call Groq → Zod-validated FormReport
- *   4. Pin full report to Pinata → ipfsCid
- *   5. Build EIP-712 Receipt (priorReceiptHash = bytes32(0))
- *   6. Read nonce from chain, sign, submit submitFormReceipt()
- *   7. Store in receipt store for API server
+ * FormAgent — triggered by JobRequested events. Analyses the athlete's video and
+ * submits an EIP-712 form receipt on-chain (priorReceiptHash = bytes32(0)).
  */
 export async function handleJobRequested(event: JobEvent): Promise<void> {
   const { jobId, athlete, videoCid: rawVideoCid, deadline } = event;
@@ -58,13 +50,11 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
 
   await withRetry(
     async () => {
-      // 1. Resolve video URL
       const videoUrl = resolveVideoUrl(videoCid);
       if (!videoUrl) {
         log.warn("Local CID detected — using mock telemetry for demo", { videoCid });
       }
 
-      // 2. Get pose telemetry from vision engine
       const telemetry = await fetchTelemetry(videoUrl, videoCid);
       log.info("Telemetry received", {
         stroke: telemetry.dominantStroke,
@@ -72,7 +62,7 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
         score: telemetry.symmetryScore,
       });
 
-      // 3. AI form analysis — Somnia native LLM agent (consensus) → Groq fallback
+      // AI form analysis — Somnia native LLM agent (consensus) → Groq fallback
       const prompt = buildFormAnalysisPrompt(telemetry);
       const { data: formReport, provenance } = await reason({
         prompt,
@@ -87,7 +77,6 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
         somniaRequestId: provenance.somnia?.requestId,
       });
 
-      // 4. Pin full report to IPFS (provenance recorded for auditability)
       const reportPayload = {
         type: "velo/form-report/v1",
         jobId,
@@ -97,7 +86,6 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
       };
       const { cid: ipfsCid } = await pinJson(reportPayload, `form-report-${jobId.slice(0, 10)}`);
 
-      // 5. Build receipt
       const reportBytes = new TextEncoder().encode(JSON.stringify(reportPayload));
       const nonce = await fetchNonce(agentAddress);
       const receiptDeadline = deadline; // agent deadline = job deadline
@@ -118,7 +106,6 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
         nonce: nonce.toString(),
       });
 
-      // 6. Sign + submit
       const signature = await signReceipt(wallet, receipt, config.contracts.orchestrator);
       const txReceipt = await submitFormReceiptTx(receipt, signature, wallet);
 
@@ -128,7 +115,6 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
         block: txReceipt.blockNumber,
       });
 
-      // 7. Store for API
       await upsertReceipt({
         jobId,
         orchestrator: config.contracts.orchestrator,
@@ -165,8 +151,6 @@ export async function handleJobRequested(event: JobEvent): Promise<void> {
     }
   );
 }
-
-// Vision engine call
 
 async function fetchTelemetry(
   videoUrl: string | null,
