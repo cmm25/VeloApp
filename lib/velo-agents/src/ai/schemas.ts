@@ -80,36 +80,31 @@ export type FormReport = z.infer<typeof FormReportSchema>;
 // The external-model agent feeds this into an LLM to produce a standard
 // FormReport, so the downstream Prescriber + UI consume it unchanged.
 //
-// ⚠ SPECIALIZATION POINT (1 of 3): when the real model's output is finalized,
-// tighten this schema to its exact shape. See buildExternalModelPrompt() in
-// prompts.ts for the full three-place checklist.
-
+// This mirrors the deployed vision-engine's POST /analyze-external adapter
+// (lib/velo-engine main.py:190 `_to_external_output`) EXACTLY as it is on the
+// wire — a FLAT { aspect, metrics{…snake_case…}, observations[], confidence,
+// notes } contract (verified live against the Koyeb engine). Field names are
+// kept snake_case to match the engine 1:1 so no normalization is needed at this
+// boundary; `metrics` is .passthrough() so the engine can add measurements
+// without breaking validation here.
 export const ExternalModelOutputSchema = z.object({
-  schemaVersion: z.string(),
-  telemetryHash: z.string(),
-  summary: z.object({
-    dominantStroke: z.string(),
-    strokeCount: z.number(),
-    durationMs: z.number(),
-    framesAnalyzed: z.number(),
-    peakAngles: z.object({
-      shoulder: z.number(), elbow: z.number(),
-      wrist: z.number(), hip: z.number(), knee: z.number()
-    }),
-    avgAngles: z.object({
-      shoulder: z.number(), elbow: z.number(),
-      wrist: z.number(), hip: z.number(), knee: z.number()
-    }),
-    analysisNotes: z.string().nullable().optional()
-  }),
-  aggregate: z.object({
-    consistencyScore: z.number(),
-    peakProximalToDistalGain: z.number().nullable().optional()
-  }),
-  quality: z.object({
-    meanKeypointConfidence: z.number(),
-    clipQualityOk: z.boolean()
-  })
+  aspect: z.string(),
+  metrics: z
+    .object({
+      stroke_count: z.number(),
+      consistency_score: z.number(),
+      peak_proximal_to_distal_gain: z.number().nullable().optional(),
+      peak_shoulder_deg: z.number().nullable().optional(),
+      peak_elbow_deg: z.number().nullable().optional(),
+      peak_hip_deg: z.number().nullable().optional(),
+      peak_knee_deg: z.number().nullable().optional(),
+      peak_wrist_velocity_tl_per_s: z.number().nullable().optional(),
+      mean_keypoint_confidence: z.number().nullable().optional(),
+    })
+    .passthrough(),
+  observations: z.array(z.string()).default([]),
+  confidence: z.number(),
+  notes: z.string().nullable().optional(),
 });
 export type ExternalModelOutput = z.infer<typeof ExternalModelOutputSchema>;
 
