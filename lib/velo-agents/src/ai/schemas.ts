@@ -39,18 +39,60 @@ export type TennisTelemetry = z.infer<typeof TennisTelemetrySchema>;
 
 // Form Analysis Report (output of FormAgent AI)
 
+// Canonical body/skill areas the UI renders. Kept stable — we normalize stray
+// LLM labels onto these rather than expanding the set.
+export const FORM_AREAS = [
+  "shoulder",
+  "elbow",
+  "wrist",
+  "hip",
+  "knee",
+  "footwork",
+  "balance",
+  "timing",
+  "symmetry",
+] as const;
+
+// The LLM (native or Groq) often emits a quality word like "consistency" that
+// isn't a body area. Map common synonyms onto canonical values so one stray
+// label never fails the whole report.
+const AREA_SYNONYMS: Record<string, (typeof FORM_AREAS)[number]> = {
+  consistency: "timing",
+  rhythm: "timing",
+  tempo: "timing",
+  sequencing: "timing",
+  "kinetic chain": "timing",
+  kinetic_chain: "timing",
+  contact: "timing",
+  asymmetry: "symmetry",
+  "left-right": "symmetry",
+  left_right: "symmetry",
+  stability: "balance",
+  posture: "balance",
+  stance: "footwork",
+  feet: "footwork",
+  legs: "knee",
+  arm: "elbow",
+  racket: "wrist",
+  racquet: "wrist",
+};
+
+// Coerce any area label to a canonical value; unknown labels fall back to
+// "timing" so the report stays valid instead of throwing.
+function normalizeArea(value: unknown): (typeof FORM_AREAS)[number] {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if ((FORM_AREAS as readonly string[]).includes(v)) {
+    return v as (typeof FORM_AREAS)[number];
+  }
+  return AREA_SYNONYMS[v] ?? "timing";
+}
+
 export const FormIssueSchema = z.object({
-  area: z.enum([
-    "shoulder",
-    "elbow",
-    "wrist",
-    "hip",
-    "knee",
-    "footwork",
-    "balance",
-    "timing",
-    "symmetry",
-  ]),
+  // Cast keeps the static type a strict enum (input === output) so the generic
+  // reason<T>() infers it correctly; normalizeArea still runs at runtime.
+  area: z.preprocess(normalizeArea, z.enum(FORM_AREAS)) as z.ZodType<
+    (typeof FORM_AREAS)[number]
+  >,
   severity: z.enum(["critical", "moderate", "minor"]),
   phase: z.enum(["preparation", "contact", "follow_through", "overall"]),
   observation: z.string().max(300),
