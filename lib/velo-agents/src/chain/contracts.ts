@@ -256,9 +256,13 @@ export async function registerAgentsOnChain(apiBase: string): Promise<void> {
   }
 }
 
-/** Health URL of the external model's own engine host (Koyeb), from its base URL. */
+/**
+ * Health URL of the external model's own engine host (Koyeb).
+ * EXTERNAL_MODEL_URL is a full inference endpoint (e.g. .../analyze-external),
+ * so derive the host origin and point /healthz at it — never append to the path.
+ */
 export function externalModelHealthUrl(): string {
-  return `${config.externalModel.url.replace(/\/+$/, "")}/healthz`;
+  return `${new URL(config.externalModel.url).origin}/healthz`;
 }
 
 /**
@@ -311,10 +315,13 @@ async function _ensureRegistered(opts: {
 
   if (already) {
     const agent = await reg.getAgent(wallet.address);
+    // Reactivate and fix a drifted endpoint independently, so one restart can do
+    // both (an inactive agent whose endpoint also moved is corrected in one run).
     if (!agent.active) {
       log.info(`${agentType} Agent inactive — re-activating`, { address: wallet.address });
       await (await (regWithSigner as any).setActive(true)).wait();
-    } else if (agent.endpoint !== endpoint) {
+    }
+    if (agent.endpoint !== endpoint) {
       // Endpoint drifted (e.g. moved to the Koyeb engine) — push an update so
       // the on-chain record matches the configured endpoint.
       log.info(`${agentType} Agent endpoint changed — updating registration`, {
@@ -323,7 +330,7 @@ async function _ensureRegistered(opts: {
         to: endpoint,
       });
       await (await (regWithSigner as any).update(name, endpoint, skills, feeWei)).wait();
-    } else {
+    } else if (agent.active) {
       log.info(`${agentType} Agent already registered`, { address: wallet.address });
     }
     return;
