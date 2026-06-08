@@ -133,10 +133,19 @@ Rules:
  */
 export function buildTechniqueQueryPrompt(formReport: FormReport): string {
   const primary = formReport.issues[0];
-  const focus = primary
-    ? `the ${formReport.strokeType} ${primary.area} during ${primary.phase} (${primary.observation})`
-    : `the ${formReport.strokeType}`;
-  return `Find one concise, actionable coaching tip to improve ${focus} in tennis. Respond with a single practical sentence an athlete can apply.`;
+  if (!primary) {
+    return `Find one concise, actionable coaching tip to improve the ${formReport.strokeType} in tennis. Respond with a single practical sentence an athlete can apply.`;
+  }
+  // Ground the search in the specific diagnosed fault — area, phase, what was
+  // observed, and the recommended fix — so the extracted tip is relevant to THIS
+  // athlete's fault rather than a generic stroke tip.
+  const fault = `the ${formReport.strokeType} ${primary.area} during the ${primary.phase} phase`;
+  return [
+    `Find one concise, actionable tennis coaching tip to fix ${fault}.`,
+    `Diagnosed fault: ${primary.observation}`,
+    `Coach's recommendation to address it: ${primary.recommendation}`,
+    `Return a single practical sentence the athlete can apply that reinforces or expands on that recommendation.`,
+  ].join(" ");
 }
 
 export function buildPrescriptionPrompt(
