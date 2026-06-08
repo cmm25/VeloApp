@@ -163,7 +163,7 @@ function StatChip({ label, value }: { label: string; value: string | number }) {
 }
 
 export function TelemetryPreview({ ipfsCid }: { ipfsCid: string }) {
-  const { data, isLoading } = useIpfsJson(ipfsCid);
+  const { data, isLoading, isError } = useIpfsJson(ipfsCid);
 
   const report = data as VeloFormReport | null;
   const telemetry = report?.telemetry;
@@ -175,6 +175,15 @@ export function TelemetryPreview({ ipfsCid }: { ipfsCid: string }) {
           <div className="w-3 h-3 rounded-full bg-border animate-pulse" />
           Loading vision analysis…
         </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-5 bg-card/20 border border-dashed border-border/40 rounded-sm flex items-center gap-2 text-sm text-muted-foreground">
+        <Eye className="w-4 h-4 shrink-0" />
+        Vision analysis preview unavailable — the IPFS gateway didn't respond.
       </div>
     );
   }

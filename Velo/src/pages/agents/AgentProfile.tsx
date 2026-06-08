@@ -6,6 +6,7 @@ import {
   useReputation,
   useAgentActivity,
   skillLabel,
+  normalizeEndpointUrl,
 } from "@/lib/domain/agents";
 import { formatStt } from "@/lib/format";
 import {
@@ -16,22 +17,6 @@ import {
   ExternalLink,
   Activity,
 } from "lucide-react";
-
-/**
- * Normalize agent endpoint URLs for production deployment.
- * Converts localhost URLs to production URLs.
- */
-function normalizeEndpointUrl(endpoint: string): string {
-  // Replace localhost:3001 with production agent URL
-  if (endpoint.includes("localhost:3001")) {
-    return endpoint.replace("localhost:3001", "veloapp-agents.onrender.com");
-  }
-  // Also handle variations like http://localhost:3001
-  if (endpoint.includes("localhost")) {
-    return endpoint.replace(/http:\/\/localhost:\d+/, "https://veloapp-agents.onrender.com");
-  }
-  return endpoint;
-}
 
 export default function AgentProfile({ address: addrParam }: { address: string }) {
   const valid = isAddress(addrParam);
@@ -135,15 +120,17 @@ export default function AgentProfile({ address: addrParam }: { address: string }
             <h2 className="text-xs font-bold uppercase tracking-widest text-muted-foreground mb-3">
               Endpoint
             </h2>
-            <a
-              href={normalizeEndpointUrl(agent.endpoint)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 font-mono text-xs text-amber hover:text-amber-soft break-all"
-            >
-              {normalizeEndpointUrl(agent.endpoint)}
-              <ExternalLink className="w-3 h-3 shrink-0" />
-            </a>
+            <div className="flex flex-col gap-2">
+              <a
+                href={normalizeEndpointUrl(agent.endpoint)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 font-mono text-xs text-amber hover:text-amber-soft break-all"
+              >
+                {normalizeEndpointUrl(agent.endpoint)}
+                <ExternalLink className="w-3 h-3 shrink-0" />
+              </a>
+            </div>
           </section>
         )}
 

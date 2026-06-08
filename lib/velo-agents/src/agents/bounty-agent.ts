@@ -1,14 +1,17 @@
 import { ethers } from "ethers";
-import { config } from "../utils/config.js";
+import { config, externalModelConfigured } from "../utils/config.js";
 import { makeLogger } from "../utils/logger.js";
 import { withRetry } from "../utils/retry.js";
 import { resolveVideoUrl, pinJson } from "../ipfs/pinata.js";
 import { reason } from "../ai/dispatch.js";
-import { buildFormAnalysisPrompt } from "../ai/prompts.js";
+import { buildFormAnalysisPrompt, buildExternalModelPrompt } from "../ai/prompts.js";
+import { callExternalModel } from "../ai/external-model.js";
 import { FormReportSchema, TennisTelemetrySchema, type TennisTelemetry } from "../ai/schemas.js";
 import {
   getFormAgentWallet,
-  getBountyExtension,
+  getExternalAgentWallet,
+  externalModelSkillHash,
+  fetchBounty,
   fetchBountyNonce,
   settleWithSplitsTx,
 } from "../chain/contracts.js";
@@ -18,28 +21,16 @@ import {
 } from "../chain/eip712.js";
 import { decodeJobSpec } from "../chain/job-spec.js";
 import { upsertReceipt } from "../api/store.js";
-import type { BountyAcceptedEvent } from "../chain/abi.js";
+import { BountyStatus, type BountyAcceptedEvent } from "../chain/abi.js";
 
 const log = makeLogger("bounty-agent");
 
 /**
- * BountyAgent — triggered by BidAccepted events on BountyExtension.
- *
- * Only runs when the lead agent == our form agent wallet address.
- *
- * Flow:
- *   1. Fetch full bounty details from chain (videoCid, athlete, deadline)
- *   2. Resolve video URL from videoCid
- *   3. Call velo-engine POST /analyze → TennisTelemetry
- *   4. Call AI → Zod-validated FormReport
- *   5. Pin full report to Pinata → ipfsCid
- *   6. Build EIP-712 Receipt signed against BountyExtension ("VeloBounty","1") domain
- *      - jobId = bytes32(bountyId)
- *      - nonce from BountyExtension.nonceOf(agent)
- *      - priorReceiptHash = bytes32(0) (single-agent bounty)
- *   7. Call settleWithSplits(bountyId, receipt, sig, [], [], [])
- *      - Empty sub-receipts + splits → lead agent receives 100% of escrow
- *   8. Store in receipt store for API
+ * BountyAgent — triggered by BidAccepted events on BountyExtension. Runs only
+ * when the on-chain leadAgent matches one of our agent wallets (Form or
+ * External), then settles via settleWithSplits with empty sub-receipts + splits
+ * so the lead agent receives 100% of escrow. The receipt is signed against the
+ * BountyExtension domain ("VeloBounty","1") with priorReceiptHash = bytes32(0).
  */
 export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<void> {
   const { bountyId, leadAgent, videoCid: rawVideoCid, athlete, deadline } = event;
@@ -49,17 +40,37 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
   const { videoCid } = decodeJobSpec(rawVideoCid);
   log.info("Handling BountyAccepted", { bountyId: bountyId.toString(), leadAgent, videoCid });
 
-  const wallet = getFormAgentWallet();
-  const agentAddress = wallet.address;
+  // A bounty can be won by EITHER of our agents. Match the on-chain leadAgent
+  // against both wallets and run the path that matches:
+  //   Form (vision.pose)      → engine POST /analyze          → form telemetry
+  //   External (vision.serve) → engine POST /analyze-external → flat model output
+  const formWallet = getFormAgentWallet();
+  const externalWallet = externalModelConfigured() ? getExternalAgentWallet() : null;
+  const lead = leadAgent.toLowerCase();
 
-  if (leadAgent.toLowerCase() !== agentAddress.toLowerCase()) {
-    log.info("Bounty lead agent is not our form agent — skipping", {
+  let wallet: ethers.Wallet;
+  let mode: "form" | "external";
+  if (lead === formWallet.address.toLowerCase()) {
+    wallet = formWallet;
+    mode = "form";
+  } else if (externalWallet && lead === externalWallet.address.toLowerCase()) {
+    wallet = externalWallet;
+    mode = "external";
+  } else {
+    log.info("Bounty lead agent is not one of our agents — skipping", {
       bountyId: bountyId.toString(),
       leadAgent,
-      ourAgent: agentAddress,
+      formAgent: formWallet.address,
+      externalAgent: externalWallet?.address ?? "(not configured)",
     });
     return;
   }
+  const agentAddress = wallet.address;
+  log.info("Bounty routed to our agent", {
+    bountyId: bountyId.toString(),
+    mode,
+    agentAddress,
+  });
 
   if (!config.contracts.bountyExtension) {
     log.warn("BOUNTY_EXTENSION_ADDRESS not set — cannot settle bounty", {
@@ -70,49 +81,52 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
 
   await withRetry(
     async () => {
-      // 1. Resolve video URL
-      const videoUrl = resolveVideoUrl(videoCid);
-      if (!videoUrl) {
-        log.warn("Local CID detected — using mock telemetry for bounty", { videoCid });
+      // Replay guard: a restart re-scans old blocks and re-emits BidAccepted for
+      // bounties already settled → settleWithSplits reverts. Skip unless the
+      // bounty is still in the Accepted state.
+      const bounty = await fetchBounty(bountyId);
+      if (bounty.status !== BountyStatus.Accepted) {
+        log.info("Bounty not in Accepted state — skipping (already settled/expired)", {
+          bountyId: bountyId.toString(),
+          status: bounty.status,
+        });
+        return;
       }
 
-      // 2. Get pose telemetry from vision engine
-      const telemetry = await fetchTelemetry(videoUrl, videoCid);
-      log.info("Telemetry received", {
-        stroke: telemetry.dominantStroke,
-        frames: telemetry.framesAnalyzed,
-        score: telemetry.symmetryScore,
-      });
+      // Strict expiry: never attempt to settle past the deadline — the contract
+      // reverts DeadlinePassed and the escrow is refundable to the poster via
+      // expireBounty. Skip so the agent doesn't loop on a doomed settlement.
+      const nowSec = BigInt(Math.floor(Date.now() / 1000));
+      if (nowSec >= bounty.deadline) {
+        log.info("Bounty past deadline — skipping settlement (strict expiry)", {
+          bountyId: bountyId.toString(),
+          deadline: bounty.deadline.toString(),
+        });
+        return;
+      }
 
-      // 3. AI form analysis
-      const prompt = buildFormAnalysisPrompt(telemetry);
-      const { data: formReport, provenance } = await reason({
-        prompt,
-        schema: FormReportSchema,
-        label: "bounty-form-analysis",
-        signer: wallet,
-      });
-      log.info("Bounty form report generated", {
+      const videoUrl = resolveVideoUrl(videoCid);
+      if (!videoUrl) {
+        log.warn("Local CID detected — analysis path still receives the raw cid", { videoCid });
+      }
+
+      // Run the analysis path that matches the winning agent → FormReport
+      const { formReport, provenance, reportPayload } =
+        mode === "external"
+          ? await analyzeExternalBounty(videoUrl, videoCid, wallet, bountyId, athlete)
+          : await analyzeFormBounty(videoUrl, videoCid, wallet, bountyId, athlete);
+      log.info("Bounty report generated", {
+        mode,
         score: formReport.overallScore,
         issueCount: formReport.issues.length,
         path: provenance.path,
       });
 
-      // 4. Pin full report to IPFS
-      const reportPayload = {
-        type: "velo/bounty-report/v1",
-        bountyId: bountyId.toString(),
-        athlete,
-        telemetry,
-        formReport,
-        provenance,
-      };
       const { cid: ipfsCid } = await pinJson(
         reportPayload,
         `bounty-report-${bountyId.toString()}`
       );
 
-      // 5. Build bounty receipt
       const reportBytes = new TextEncoder().encode(JSON.stringify(reportPayload));
       const nonce = await fetchBountyNonce(agentAddress);
 
@@ -133,14 +147,14 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         jobId: receipt.jobId,
       });
 
-      // 6. Sign against BountyExtension domain ("VeloBounty","1")
+      // Sign against the BountyExtension domain ("VeloBounty","1")
       const signature = await signBountyReceipt(
         wallet,
         receipt,
         config.contracts.bountyExtension
       );
 
-      // 7. Settle — no sub-agents, lead takes 100%
+      // Settle — no sub-agents, lead takes 100%
       const txReceipt = await settleWithSplitsTx(bountyId, receipt, signature, wallet);
 
       log.info("Bounty settled ✓", {
@@ -149,7 +163,6 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         block: txReceipt.blockNumber,
       });
 
-      // 8. Store for API
       const jobId = receipt.jobId;
       await upsertReceipt({
         jobId,
@@ -186,6 +199,68 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
       },
     }
   );
+}
+
+// Form (vision.pose) bounty path: engine /analyze → telemetry → FormReport.
+async function analyzeFormBounty(
+  videoUrl: string | null,
+  videoCid: string,
+  wallet: ethers.Wallet,
+  bountyId: bigint,
+  athlete: string
+) {
+  const telemetry = await fetchTelemetry(videoUrl, videoCid);
+  log.info("Telemetry received", {
+    stroke: telemetry.dominantStroke,
+    frames: telemetry.framesAnalyzed,
+    score: telemetry.symmetryScore,
+  });
+  const prompt = buildFormAnalysisPrompt(telemetry);
+  const { data: formReport, provenance } = await reason({
+    prompt,
+    schema: FormReportSchema,
+    label: "bounty-form-analysis",
+    signer: wallet,
+  });
+  const reportPayload = {
+    type: "velo/bounty-report/v1",
+    bountyId: bountyId.toString(),
+    athlete,
+    telemetry,
+    formReport,
+    provenance,
+  };
+  return { formReport, provenance, reportPayload };
+}
+
+// External (vision.serve) bounty path: engine /analyze-external → flat model
+// output → FormReport. Mirrors external-model-agent's job-side flow.
+async function analyzeExternalBounty(
+  videoUrl: string | null,
+  videoCid: string,
+  wallet: ethers.Wallet,
+  bountyId: bigint,
+  athlete: string
+) {
+  const modelOutput = await callExternalModel(videoUrl, videoCid);
+  const prompt = buildExternalModelPrompt(modelOutput);
+  const { data: formReport, provenance } = await reason({
+    prompt,
+    schema: FormReportSchema,
+    label: "bounty-external-analysis",
+    signer: wallet,
+  });
+  const reportPayload = {
+    type: "velo/bounty-report/v1",
+    bountyId: bountyId.toString(),
+    athlete,
+    skill: externalModelSkillHash(),
+    modelName: config.externalModel.name,
+    modelOutput,
+    formReport,
+    provenance,
+  };
+  return { formReport, provenance, reportPayload };
 }
 
 async function fetchTelemetry(

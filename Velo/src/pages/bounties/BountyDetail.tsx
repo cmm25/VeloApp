@@ -72,8 +72,12 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
 
   const isPoster =
     !!bounty && !!me && bounty.poster.toLowerCase() === me.toLowerCase();
+  // Strict expiry: a past-deadline bounty is refundable whether it was never
+  // accepted (Open) or was accepted but the agent missed the deadline (Accepted).
   const isExpired =
-    !!bounty && Date.now() / 1000 > Number(bounty.deadline) && bounty.status === "Open";
+    !!bounty &&
+    Date.now() / 1000 >= Number(bounty.deadline) &&
+    (bounty.status === "Open" || bounty.status === "Accepted");
 
   const isActiveAgent = !!myAgent && myAgent.exists && myAgent.active;
   const requiredSkills = bounty?.requiredSkills ?? [];
@@ -222,7 +226,9 @@ export default function BountyDetail({ id: idParam }: { id: string }) {
                   <AlertTriangle className="w-4 h-4 text-destructive mt-0.5" />
                   <div>
                     <div className="text-sm text-chalk font-medium">
-                      Deadline passed before any bid was accepted
+                      {bounty.status === "Accepted"
+                        ? "Deadline passed before the agent settled"
+                        : "Deadline passed before any bid was accepted"}
                     </div>
                     <div className="text-xs text-muted-foreground font-light">
                       Anyone can refund the escrow to the poster.

@@ -138,21 +138,90 @@ export async function fetchIndexedReceipts(
 
 export type IndexerHealth =
   | { status: "ready"; latencyMs: number; at: number }
+  | { status: "waking"; reason: string; latencyMs: number; at: number }
   | { status: "down"; reason: string; latencyMs: number; at: number };
 
-export async function pingIndexer(): Promise<IndexerHealth> {
+/**
+ * A backend hosted on a free tier (Render) sleeps after idle and the first
+ * request wakes it, which surfaces as a network error or a transient
+ * 502/503/504 for a few seconds. Treat those as "waking" (retry) rather than
+ * a hard "down" so the UI can show a friendly spin-up state instead of an
+ * alarming failure during the first interaction of a demo.
+ */
+function isTransientWakeStatus(httpStatus: number): boolean {
+  return httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+}
+
+/**
+ * Single ping. Classifies a transient cold-start signal as "waking"; a fetch
+ * that throws (network/DNS/connection refused while the dyno boots) is also
+ * "waking". Any other non-ok response is a real "down".
+ */
+export async function pingIndexer(signal?: AbortSignal): Promise<IndexerHealth> {
   const t0 = performance.now();
   try {
-    const res = await fetch(`${apiBase}/healthz`, { headers: { Accept: "application/json" } });
+    const res = await fetch(`${apiBase}/healthz`, {
+      headers: { Accept: "application/json" },
+      signal,
+    });
     const latencyMs = Math.round(performance.now() - t0);
-    if (!res.ok) return { status: "down", reason: `HTTP ${res.status}`, latencyMs, at: Date.now() };
-    return { status: "ready", latencyMs, at: Date.now() };
+    if (res.ok) return { status: "ready", latencyMs, at: Date.now() };
+    if (isTransientWakeStatus(res.status)) {
+      return { status: "waking", reason: `HTTP ${res.status}`, latencyMs, at: Date.now() };
+    }
+    return { status: "down", reason: `HTTP ${res.status}`, latencyMs, at: Date.now() };
   } catch (err) {
+    // A thrown fetch during boot looks identical to an outage; prefer the
+    // optimistic "waking" reading — the retrying caller downgrades to "down"
+    // only after the attempt budget is exhausted.
     return {
-      status: "down",
+      status: "waking",
       reason: (err as Error).message,
       latencyMs: Math.round(performance.now() - t0),
       at: Date.now(),
     };
   }
+}
+
+/**
+ * Ping with bounded exponential backoff. Resolves "ready" as soon as the
+ * backend answers, keeps reporting "waking" via `onAttempt` between tries, and
+ * resolves "down" only after `maxAttempts` transient failures — so a normal
+ * cold start shows the spin-up state and a genuine outage still ends in a clear
+ * error. `signal` lets a caller abort when it unmounts.
+ */
+export async function pingIndexerWithRetry(opts?: {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  onAttempt?: (health: IndexerHealth, attempt: number) => void;
+  signal?: AbortSignal;
+}): Promise<IndexerHealth> {
+  const maxAttempts = opts?.maxAttempts ?? 6;
+  const baseDelayMs = opts?.baseDelayMs ?? 1500;
+  const maxDelayMs = opts?.maxDelayMs ?? 8000;
+
+  let last: IndexerHealth = { status: "waking", reason: "starting", latencyMs: 0, at: Date.now() };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    if (opts?.signal?.aborted) return last;
+    last = await pingIndexer(opts?.signal);
+    if (last.status === "ready" || last.status === "down") {
+      opts?.onAttempt?.(last, attempt);
+      return last;
+    }
+    // still waking
+    opts?.onAttempt?.(last, attempt);
+    if (attempt < maxAttempts) {
+      const delay = Math.min(baseDelayMs * 2 ** (attempt - 1), maxDelayMs);
+      await new Promise<void>((resolve) => {
+        const id = setTimeout(resolve, delay);
+        opts?.signal?.addEventListener("abort", () => {
+          clearTimeout(id);
+          resolve();
+        }, { once: true });
+      });
+    }
+  }
+  // Budget exhausted while still transiently failing → treat as down.
+  return { status: "down", reason: last.reason ?? "unreachable", latencyMs: last.latencyMs, at: Date.now() };
 }
