@@ -44,6 +44,16 @@ export const ORCHESTRATOR_ABI = [
   "function nonceOf(address agent) view returns (uint256)",
   "function minJobFee() view returns (uint256)",
   "function domainSeparator() view returns (bytes32)",
+
+  // Custom errors — declared so ethers can decode revert reasons by name
+  // (e.g. JobNotFormSubmitted when another agent already completed the job).
+  "error JobAlreadyExists()",
+  "error JobNotFound()",
+  "error JobNotRequested()",
+  "error JobNotFormSubmitted()",
+  "error DeadlineNotReached()",
+  "error OnlyCoach(address coach)",
+  "error ReceiptDeadlineAfterJob(uint64 receiptDeadline, uint64 jobDeadline)",
 ] as const;
 
 export const AGENT_REGISTRY_ABI = [
