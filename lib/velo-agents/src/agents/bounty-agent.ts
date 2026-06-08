@@ -26,23 +26,11 @@ import { BountyStatus, type BountyAcceptedEvent } from "../chain/abi.js";
 const log = makeLogger("bounty-agent");
 
 /**
- * BountyAgent — triggered by BidAccepted events on BountyExtension.
- *
- * Only runs when the lead agent == our form agent wallet address.
- *
- * Flow:
- *   1. Fetch full bounty details from chain (videoCid, athlete, deadline)
- *   2. Resolve video URL from videoCid
- *   3. Call velo-engine POST /analyze → TennisTelemetry
- *   4. Call AI → Zod-validated FormReport
- *   5. Pin full report to Pinata → ipfsCid
- *   6. Build EIP-712 Receipt signed against BountyExtension ("VeloBounty","1") domain
- *      - jobId = bytes32(bountyId)
- *      - nonce from BountyExtension.nonceOf(agent)
- *      - priorReceiptHash = bytes32(0) (single-agent bounty)
- *   7. Call settleWithSplits(bountyId, receipt, sig, [], [], [])
- *      - Empty sub-receipts + splits → lead agent receives 100% of escrow
- *   8. Store in receipt store for API
+ * BountyAgent — triggered by BidAccepted events on BountyExtension. Runs only
+ * when the on-chain leadAgent matches one of our agent wallets (Form or
+ * External), then settles via settleWithSplits with empty sub-receipts + splits
+ * so the lead agent receives 100% of escrow. The receipt is signed against the
+ * BountyExtension domain ("VeloBounty","1") with priorReceiptHash = bytes32(0).
  */
 export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<void> {
   const { bountyId, leadAgent, videoCid: rawVideoCid, athlete, deadline } = event;
@@ -52,8 +40,8 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
   const { videoCid } = decodeJobSpec(rawVideoCid);
   log.info("Handling BountyAccepted", { bountyId: bountyId.toString(), leadAgent, videoCid });
 
-  // FIX B: a bounty can be won by EITHER of our agents. Match the on-chain
-  // leadAgent against both wallets and run the path that matches:
+  // A bounty can be won by EITHER of our agents. Match the on-chain leadAgent
+  // against both wallets and run the path that matches:
   //   Form (vision.pose)      → engine POST /analyze          → form telemetry
   //   External (vision.serve) → engine POST /analyze-external → flat model output
   const formWallet = getFormAgentWallet();
@@ -93,9 +81,9 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
 
   await withRetry(
     async () => {
-      // Replay guard (mirrors FIX D on the job side): a restart re-scans old blocks
-      // and re-emits BidAccepted for bounties already settled → settleWithSplits
-      // reverts. Skip unless the bounty is still in the Accepted state.
+      // Replay guard: a restart re-scans old blocks and re-emits BidAccepted for
+      // bounties already settled → settleWithSplits reverts. Skip unless the
+      // bounty is still in the Accepted state.
       const bounty = await fetchBounty(bountyId);
       if (bounty.status !== BountyStatus.Accepted) {
         log.info("Bounty not in Accepted state — skipping (already settled/expired)", {
@@ -117,13 +105,12 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         return;
       }
 
-      // 1. Resolve video URL
       const videoUrl = resolveVideoUrl(videoCid);
       if (!videoUrl) {
         log.warn("Local CID detected — analysis path still receives the raw cid", { videoCid });
       }
 
-      // 2-3. Run the analysis path that matches the winning agent → FormReport
+      // Run the analysis path that matches the winning agent → FormReport
       const { formReport, provenance, reportPayload } =
         mode === "external"
           ? await analyzeExternalBounty(videoUrl, videoCid, wallet, bountyId, athlete)
@@ -135,13 +122,11 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         path: provenance.path,
       });
 
-      // 4. Pin full report to IPFS
       const { cid: ipfsCid } = await pinJson(
         reportPayload,
         `bounty-report-${bountyId.toString()}`
       );
 
-      // 5. Build bounty receipt
       const reportBytes = new TextEncoder().encode(JSON.stringify(reportPayload));
       const nonce = await fetchBountyNonce(agentAddress);
 
@@ -162,14 +147,14 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         jobId: receipt.jobId,
       });
 
-      // 6. Sign against BountyExtension domain ("VeloBounty","1")
+      // Sign against the BountyExtension domain ("VeloBounty","1")
       const signature = await signBountyReceipt(
         wallet,
         receipt,
         config.contracts.bountyExtension
       );
 
-      // 7. Settle — no sub-agents, lead takes 100%
+      // Settle — no sub-agents, lead takes 100%
       const txReceipt = await settleWithSplitsTx(bountyId, receipt, signature, wallet);
 
       log.info("Bounty settled ✓", {
@@ -178,7 +163,6 @@ export async function handleBountyAccepted(event: BountyAcceptedEvent): Promise<
         block: txReceipt.blockNumber,
       });
 
-      // 8. Store for API
       const jobId = receipt.jobId;
       await upsertReceipt({
         jobId,

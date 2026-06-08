@@ -73,16 +73,6 @@ async function prescriptionAlreadySettled(jobId: string, err: unknown): Promise<
 /**
  * PrescriberAgent — triggered by FormReceiptSubmitted events.
  *
- * Flow:
- *   1. Call getFormReceipt(jobId) ON-CHAIN (proves reading from chain state)
- *   2. Compute priorReceiptHash = ReceiptLib.digest(formReceipt)
- *   3. Recover the full FormReport from the store (pinned IPFS, or store)
- *   4. Call Groq → Zod-validated PrescriptionReport
- *   5. Pin prescription to Pinata → ipfsCid
- *   6. Build EIP-712 Receipt with priorReceiptHash
- *   7. Read nonce, sign, submit submitPrescription()
- *   8. Store in receipt store for API server
- *
  * The priorReceiptHash binding is the core security guarantee:
  * submitPrescription() will revert with PriorReceiptMismatch unless we
  * compute the hash from the exact on-chain form receipt.
@@ -97,14 +87,14 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
 
   await withRetry(
     async () => {
-      // 0. Idempotency / race guard. Multiple runner instances (or a restart
-      //    re-scanning old blocks) can react to the same FormReceiptSubmitted
-      //    event with the same prescriber key. Only one tx can move the job
-      //    FormSubmitted → Completed; the rest would revert JobNotFormSubmitted.
-      //    Skip up front if the job already left FormSubmitted so we neither
-      //    waste an AI/IPFS round-trip nor spam retries. (Requested/None are
-      //    left to proceed — they only mean read-after-write RPC lag, which the
-      //    retry below absorbs.)
+      // Idempotency / race guard. Multiple runner instances (or a restart
+      // re-scanning old blocks) can react to the same FormReceiptSubmitted
+      // event with the same prescriber key. Only one tx can move the job
+      // FormSubmitted → Completed; the rest would revert JobNotFormSubmitted.
+      // Skip up front if the job already left FormSubmitted so we neither
+      // waste an AI/IPFS round-trip nor spam retries. (Requested/None are
+      // left to proceed — they only mean read-after-write RPC lag, which the
+      // retry below absorbs.)
       const jobAtStart = await fetchJob(jobId);
       if (prescriptionMoot(jobAtStart.status)) {
         log.info("Job already settled/cancelled — skipping prescription (no-op)", {
@@ -114,7 +104,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         return;
       }
 
-      // 1. Read form receipt ON-CHAIN — this is the cryptographic proof of reading
+      // Read form receipt ON-CHAIN — this is the cryptographic proof of reading
       const formReceipt = await fetchFormReceipt(jobId);
       log.info("Form receipt read from chain", {
         jobId,
@@ -122,11 +112,11 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         ipfsCid: formReceipt.ipfsCid,
       });
 
-      // 2. Compute priorReceiptHash — mirrors ReceiptLib.digest() exactly
+      // Compute priorReceiptHash — mirrors ReceiptLib.digest() exactly
       const priorReceiptHash = computeReceiptDigest(formReceipt);
       log.info("Prior receipt hash computed", { priorReceiptHash });
 
-      // 3. Get the form report content (from store or rebuild minimal context)
+      // Get the form report content (from store or rebuild minimal context)
       const stored = await getReceipt(jobId);
       const formReport = stored?.form?.report;
 
@@ -134,7 +124,6 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         ? JSON.stringify(formReport)
         : `Summary from chain: "${formReceipt.summary}"`;
 
-      // Parse form report from store if available, or build minimal one from summary
       const parsedFormReport = formReport ?? {
         strokeType: "unknown" as const,
         overallScore: 5,
@@ -144,7 +133,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         analysedAt: new Date().toISOString(),
       };
 
-      // 4. AI prescription — Somnia native LLM agent (consensus) → Groq fallback
+      // AI prescription — Somnia native LLM agent (consensus) → Groq fallback
       const prompt = buildPrescriptionPrompt(parsedFormReport);
       const { data: prescriptionReport, provenance } = await reason({
         prompt,
@@ -186,7 +175,6 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         }
       }
 
-      // 5. Pin prescription to IPFS
       const prescriptionPayload = {
         type: "velo/prescription/v1",
         jobId,
@@ -204,11 +192,8 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         `prescription-${jobId.slice(0, 10)}`
       );
 
-      // 6. Build receipt
       const reportBytes = new TextEncoder().encode(JSON.stringify(prescriptionPayload));
       const nonce = await fetchNonce(agentAddress);
-
-      // Prescription deadline = same as job deadline (read from chain form receipt)
       const prescriptionDeadline = formReceipt.deadline;
 
       const receipt = buildPrescriptionReceipt(
@@ -228,7 +213,7 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         priorReceiptHash,
       });
 
-      // 7. Sign + submit — will revert if priorReceiptHash doesn't match on-chain
+      // Sign + submit — will revert if priorReceiptHash doesn't match on-chain
       const signature = await signReceipt(wallet, receipt, config.contracts.orchestrator);
 
       // Re-check immediately before submitting: the AI + IPFS work above takes
@@ -264,7 +249,6 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
         block: txReceipt.blockNumber,
       });
 
-      // 8. Update store
       await upsertReceipt({
         jobId,
         orchestrator: config.contracts.orchestrator,
