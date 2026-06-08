@@ -29,6 +29,12 @@ export type ReputationStats = {
   rollingScore: bigint;
 };
 
+// Tiebreak between two registrations of the same logical agent.
+function preferAgent(a: AgentRecord, b: AgentRecord): boolean {
+  if (a.active !== b.active) return a.active;
+  return a.registeredAt > b.registeredAt;
+}
+
 function decodeAgent(addr: Address, raw: unknown): AgentRecord | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -66,14 +72,27 @@ export function useRegisteredAgents() {
   });
   const agents = useMemo<AgentRecord[]>(() => {
     if (!detailsQ.data) return [];
-    const out: AgentRecord[] = [];
+    const all: AgentRecord[] = [];
     detailsQ.data.forEach((res, i) => {
       if (res.status === "success") {
         const a = decodeAgent(addresses[i]!, res.result);
-        if (a && a.exists) out.push(a);
+        if (a && a.exists) all.push(a);
       }
     });
-    return out;
+    // Collapse duplicate registrations of the same logical agent — same name,
+    // endpoint and skill set, registered under rotated keys. Including the
+    // endpoint avoids merging genuinely distinct agents that only share branding.
+    const byIdentity = new Map<string, AgentRecord>();
+    for (const a of all) {
+      const key = [
+        a.name.trim().toLowerCase(),
+        a.endpoint.trim().toLowerCase(),
+        a.skills.map((s) => s.toLowerCase()).sort().join(","),
+      ].join("|");
+      const cur = byIdentity.get(key);
+      if (!cur || preferAgent(a, cur)) byIdentity.set(key, a);
+    }
+    return Array.from(byIdentity.values());
   }, [detailsQ.data, addresses]);
   return {
     agents,

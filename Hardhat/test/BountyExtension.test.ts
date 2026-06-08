@@ -370,7 +370,7 @@ describe("BountyExtension", () => {
     );
   });
 
-  it("accepted bounty can settle after bounty deadline within receipt deadline window", async () => {
+  it("strict expiry: accepted bounty cannot settle after deadline; expires to poster", async () => {
     const { poster, athlete, lead, bounty, domain } = await deployAll();
     const fee = parseEther("0.05");
     const { bountyId, deadline } = await postOpen(
@@ -385,10 +385,17 @@ describe("BountyExtension", () => {
 
     await increaseTimeTo(deadline + 1n);
 
+    // Late settlement is rejected once the deadline has passed.
     const leadR = makeReceipt(bountyId, lead.address, "bafy", 0n, 0n);
     const leadSig = await lead.signTypedData(domain, RECEIPT_TYPES, leadR);
-    await (await bounty.settleWithSplits(bountyId, leadR, leadSig, [], [], [])).wait();
+    await expectCustomError(
+      bounty.settleWithSplits(bountyId, leadR, leadSig, [], [], []),
+      "DeadlinePassed",
+    );
 
-    expect(await bounty.pendingOf(lead.address)).to.equal(fee);
+    // The accepted-but-unsettled bounty can instead be expired, refunding poster.
+    await (await bounty.expireBounty(bountyId)).wait();
+    expect(await bounty.pendingOf(poster.address)).to.equal(fee);
+    expect(await bounty.pendingOf(lead.address)).to.equal(0n);
   });
 });

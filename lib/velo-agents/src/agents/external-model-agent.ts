@@ -10,12 +10,13 @@ import {
   getExternalAgentWallet,
   externalModelSkillHash,
   fetchNonce,
+  fetchJob,
   submitFormReceiptTx,
 } from "../chain/contracts.js";
 import { buildFormReceipt, signReceipt } from "../chain/eip712.js";
 import { decodeJobSpec } from "../chain/job-spec.js";
 import { upsertReceipt } from "../api/store.js";
-import type { JobEvent } from "../chain/abi.js";
+import { JobStatus, type JobEvent } from "../chain/abi.js";
 
 const log = makeLogger("external-model-agent");
 
@@ -58,6 +59,17 @@ export async function handleExternalJobRequested(event: JobEvent): Promise<void>
 
   await withRetry(
     async () => {
+      // FIX D: replay guard. A restart re-scans old blocks; the external agent also
+      // submits a STANDARD form receipt, so skip unless the job still awaits one.
+      const job = await fetchJob(jobId);
+      if (job.status !== JobStatus.Requested) {
+        log.info("Job no longer in Requested state — skipping (already processed)", {
+          jobId,
+          status: job.status,
+        });
+        return;
+      }
+
       // 1. Resolve video URL (raw cid, routing prefix already stripped)
       const videoUrl = resolveVideoUrl(videoCid);
       if (!videoUrl) {

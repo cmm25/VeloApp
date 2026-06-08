@@ -66,6 +66,15 @@ export enum JobStatus {
   Cancelled = 4,
 }
 
+// Bounty status enum mirrors BountyStatus in BountyExtension.sol
+export enum BountyStatus {
+  None = 0,
+  Open = 1,
+  Accepted = 2,
+  Settled = 3,
+  Expired = 4,
+}
+
 export interface JobEvent {
   jobId: string;
   coach: string;
