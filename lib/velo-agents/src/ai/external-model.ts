@@ -32,6 +32,9 @@ export async function callExternalModel(
     headers.Authorization = `Bearer ${config.externalModel.apiKey}`;
   }
 
+  // EXTERNAL_MODEL_URL is the full analysis endpoint (e.g. .../analyze-external,
+  // the engine's flat adapter route). POST to it directly — appending a route
+  // here would hit .../analyze-external/analyze → 404 and the wrong shape.
   const res = await withRetry(
     () =>
       fetch(url, {
@@ -59,7 +62,9 @@ export async function callExternalModel(
 
   log.info("External model output received", {
     aspect: parsed.data.aspect,
-    metricCount: Object.keys(parsed.data.metrics).length,
+    strokeCount: parsed.data.metrics.stroke_count,
+    consistencyScore: parsed.data.metrics.consistency_score,
+    confidence: parsed.data.confidence,
   });
   return parsed.data;
 }

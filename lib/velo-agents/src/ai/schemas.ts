@@ -39,18 +39,60 @@ export type TennisTelemetry = z.infer<typeof TennisTelemetrySchema>;
 
 // Form Analysis Report (output of FormAgent AI)
 
+// Canonical body/skill areas the UI renders. Kept stable — we normalize stray
+// LLM labels onto these rather than expanding the set.
+export const FORM_AREAS = [
+  "shoulder",
+  "elbow",
+  "wrist",
+  "hip",
+  "knee",
+  "footwork",
+  "balance",
+  "timing",
+  "symmetry",
+] as const;
+
+// The LLM (native or Groq) often emits a quality word like "consistency" that
+// isn't a body area. Map common synonyms onto canonical values so one stray
+// label never fails the whole report.
+const AREA_SYNONYMS: Record<string, (typeof FORM_AREAS)[number]> = {
+  consistency: "timing",
+  rhythm: "timing",
+  tempo: "timing",
+  sequencing: "timing",
+  "kinetic chain": "timing",
+  kinetic_chain: "timing",
+  contact: "timing",
+  asymmetry: "symmetry",
+  "left-right": "symmetry",
+  left_right: "symmetry",
+  stability: "balance",
+  posture: "balance",
+  stance: "footwork",
+  feet: "footwork",
+  legs: "knee",
+  arm: "elbow",
+  racket: "wrist",
+  racquet: "wrist",
+};
+
+// Coerce any area label to a canonical value; unknown labels fall back to
+// "timing" so the report stays valid instead of throwing.
+function normalizeArea(value: unknown): (typeof FORM_AREAS)[number] {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if ((FORM_AREAS as readonly string[]).includes(v)) {
+    return v as (typeof FORM_AREAS)[number];
+  }
+  return AREA_SYNONYMS[v] ?? "timing";
+}
+
 export const FormIssueSchema = z.object({
-  area: z.enum([
-    "shoulder",
-    "elbow",
-    "wrist",
-    "hip",
-    "knee",
-    "footwork",
-    "balance",
-    "timing",
-    "symmetry",
-  ]),
+  // Cast keeps the static type a strict enum (input === output) so the generic
+  // reason<T>() infers it correctly; normalizeArea still runs at runtime.
+  area: z.preprocess(normalizeArea, z.enum(FORM_AREAS)) as z.ZodType<
+    (typeof FORM_AREAS)[number]
+  >,
   severity: z.enum(["critical", "moderate", "minor"]),
   phase: z.enum(["preparation", "contact", "follow_through", "overall"]),
   observation: z.string().max(300),
@@ -80,24 +122,34 @@ export type FormReport = z.infer<typeof FormReportSchema>;
 // The external-model agent feeds this into an LLM to produce a standard
 // FormReport, so the downstream Prescriber + UI consume it unchanged.
 //
-// ⚠ SPECIALIZATION POINT (1 of 3): when the real model's output is finalized,
-// tighten this schema to its exact shape. See buildExternalModelPrompt() in
-// prompts.ts for the full three-place checklist.
-
+// This mirrors the deployed vision-engine's POST /analyze-external adapter
+// (lib/velo-engine main.py:190 `_to_external_output`) EXACTLY as it is on the
+// wire — a FLAT { aspect, metrics{…snake_case…}, observations[], confidence,
+// notes } contract (verified live against the Koyeb engine). Field names are
+// kept snake_case to match the engine 1:1 so no normalization is needed at this
+// boundary; `metrics` is .passthrough() so the engine can add measurements
+// without breaking validation here.
 export const ExternalModelOutputSchema = z.object({
-  // Which tennis aspect this model analysed (e.g. "serve", "rally", "footwork").
-  aspect: z.string().min(1).max(64),
-  // Named numeric measurements the model produced (keys are model-specific).
-  metrics: z.record(z.string(), z.number()).default({}),
-  // Free-text observations the model emitted about the clip.
-  observations: z.array(z.string().max(500)).max(20).default([]),
-  // Optional 0-1 confidence the model attaches to its analysis.
-  confidence: z.number().min(0).max(1).nullish(),
-  // Optional human-readable summary from the model itself.
-  notes: z.string().max(1000).nullish(),
+  aspect: z.string(),
+  metrics: z
+    .object({
+      stroke_count: z.number(),
+      consistency_score: z.number(),
+      peak_proximal_to_distal_gain: z.number().nullable().optional(),
+      peak_shoulder_deg: z.number().nullable().optional(),
+      peak_elbow_deg: z.number().nullable().optional(),
+      peak_hip_deg: z.number().nullable().optional(),
+      peak_knee_deg: z.number().nullable().optional(),
+      peak_wrist_velocity_tl_per_s: z.number().nullable().optional(),
+      mean_keypoint_confidence: z.number().nullable().optional(),
+    })
+    .passthrough(),
+  observations: z.array(z.string()).default([]),
+  confidence: z.number(),
+  notes: z.string().nullable().optional(),
 });
-
 export type ExternalModelOutput = z.infer<typeof ExternalModelOutputSchema>;
+
 
 // Prescription Report (output of PrescriberAgent AI)
 
@@ -135,6 +187,16 @@ export const SomniaAgentReceiptSchema = z.object({
   receipt: z.string().nullable(),
   receiptUrl: z.string(),
 });
+
+// A real coaching tip extracted from a verified source by Somnia's LLM Parse
+// Website agent, with the consensus receipt that backs it.
+export const TechniqueReferenceSchema = z.object({
+  tip: z.string(),
+  sourceUrl: z.string(),
+  somnia: SomniaAgentReceiptSchema.optional(),
+});
+
+export type TechniqueReference = z.infer<typeof TechniqueReferenceSchema>;
 
 export const AiProvenanceSchema = z.object({
   path: z.enum(["native", "fallback"]),
@@ -184,6 +246,7 @@ export const StoredReceiptSchema = z.object({
     blockNumber: z.string(),
     report: PrescriptionReportSchema.optional(),
     provenance: AiProvenanceSchema.optional(),
+    techniqueReference: TechniqueReferenceSchema.optional(),
   }).nullable(),
 });
 

@@ -29,6 +29,18 @@ export type ReputationStats = {
   rollingScore: bigint;
 };
 
+// Pick the canonical agent between two registrations of the same role: higher
+// on-chain reputation wins, then the most recently registered (rotated) key.
+function preferAgent(
+  a: AgentRecord,
+  aScore: bigint,
+  b: AgentRecord,
+  bScore: bigint,
+): boolean {
+  if (aScore !== bScore) return aScore > bScore;
+  return a.registeredAt > b.registeredAt;
+}
+
 function decodeAgent(addr: Address, raw: unknown): AgentRecord | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -48,6 +60,7 @@ function decodeAgent(addr: Address, raw: unknown): AgentRecord | null {
 /** List every registered agent in the on-chain registry. */
 export function useRegisteredAgents() {
   const reg = agentRegistryAddress();
+  const rep = reputationAddress();
   const listQ = useReadContract({
     address: reg ?? undefined,
     abi: agentRegistryAbi,
@@ -64,23 +77,57 @@ export function useRegisteredAgents() {
     })),
     query: { enabled: !!reg && addresses.length > 0 },
   });
-  const agents = useMemo<AgentRecord[]>(() => {
+  // Only active, existing agents are eligible for the directory.
+  const activeRecords = useMemo<AgentRecord[]>(() => {
     if (!detailsQ.data) return [];
     const out: AgentRecord[] = [];
     detailsQ.data.forEach((res, i) => {
       if (res.status === "success") {
         const a = decodeAgent(addresses[i]!, res.result);
-        if (a && a.exists) out.push(a);
+        if (a && a.exists && a.active) out.push(a);
       }
     });
     return out;
   }, [detailsQ.data, addresses]);
+  // Reputation for the active agents — used to pick the canonical one when the
+  // same role was registered under several (rotated) keys.
+  const repQ = useReadContracts({
+    contracts: activeRecords.map((a) => ({
+      address: rep!,
+      abi: reputationAbi,
+      functionName: "statsOf" as const,
+      args: [a.address] as const,
+    })),
+    query: { enabled: !!rep && activeRecords.length > 0 },
+  });
+  const agents = useMemo<AgentRecord[]>(() => {
+    const scoreOf = (i: number): bigint => {
+      const r = repQ.data?.[i];
+      if (r && r.status === "success" && r.result && typeof r.result === "object") {
+        return ((r.result as Record<string, unknown>).rollingScore as bigint) ?? 0n;
+      }
+      return 0n;
+    };
+    // Dedupe by role (the agent's skill set): keep one agent per role, preferring
+    // the highest on-chain reputation, then the most recently registered key.
+    const byRole = new Map<string, { rec: AgentRecord; score: bigint }>();
+    activeRecords.forEach((a, i) => {
+      const key = a.skills.map((s) => s.toLowerCase()).sort().join(",");
+      const score = scoreOf(i);
+      const cur = byRole.get(key);
+      if (!cur || preferAgent(a, score, cur.rec, cur.score)) {
+        byRole.set(key, { rec: a, score });
+      }
+    });
+    return Array.from(byRole.values()).map((v) => v.rec);
+  }, [activeRecords, repQ.data]);
   return {
     agents,
-    isLoading: listQ.isLoading || detailsQ.isLoading,
+    isLoading: listQ.isLoading || detailsQ.isLoading || repQ.isLoading,
     refetch: () => {
       listQ.refetch();
       detailsQ.refetch();
+      repQ.refetch();
     },
   };
 }
@@ -211,6 +258,33 @@ export function isVisionSkill(skill: Hex): boolean {
   return VISION_SKILLS.has(skill.toLowerCase());
 }
 
+/**
+ * The catalog of known video-analysis model skills (every `vision.*` entry in
+ * SKILL_NAMES, e.g. the default Pose & Form model and the Serve model). The
+ * direct-hire picker offers these so a coach can always choose a model, even
+ * before a given analysis agent is enumerated in the on-chain registry.
+ */
+export function catalogVisionSkills(): Hex[] {
+  return Array.from(VISION_SKILLS) as Hex[];
+}
+
 export function skillLabel(skill: Hex): string {
   return KNOWN_SKILLS[skill.toLowerCase()] ?? `${skill.slice(0, 10)}…`;
+}
+
+/**
+ * Display URL for an agent's on-chain endpoint. Real http(s) endpoints (Render,
+ * Koyeb, etc.) are shown exactly as registered — never rewritten. Only in local
+ * dev do we remap a `localhost` endpoint to the dev agent host as a convenience;
+ * in production we never fabricate a host, so the UI faithfully shows whatever
+ * is registered on-chain.
+ */
+export function normalizeEndpointUrl(endpoint: string): string {
+  if (import.meta.env.DEV && /localhost/.test(endpoint)) {
+    return endpoint.replace(
+      /https?:\/\/localhost(:\d+)?/,
+      "https://veloapp-agents.onrender.com",
+    );
+  }
+  return endpoint;
 }

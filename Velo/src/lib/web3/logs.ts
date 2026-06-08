@@ -126,3 +126,35 @@ export async function recentRangeForTimestamp(
   const fromBlock = head > range ? head - range : 0n;
   return { fromBlock, toBlock: head, capped };
 }
+
+/**
+ * Estimate the block window covering a *closed time interval* `[startSec, endSec]`
+ * (unix seconds), with a block buffer on each side for clock/block-time skew.
+ *
+ * Unlike {@link recentRangeForTimestamp} (which spans `createdAt → head` and
+ * grows unboundedly with age), this spans only `start → end`, so the scanned
+ * width is the interval's own duration — independent of how long ago it was.
+ * Use it to scan an entity's bounded lifetime (e.g. a job's
+ * `createdAt → deadline`) so a lookup stays cheap and reliable no matter the
+ * entity's age. Both ends are clamped to `[0, head]`.
+ */
+export async function blockWindowForInterval(
+  client: Client,
+  startSec: bigint,
+  endSec: bigint,
+  bufferBlocks = 5_000n,
+): Promise<{ fromBlock: bigint; toBlock: bigint }> {
+  const head = await client.getBlockNumber();
+  const nowSec = BigInt(Math.floor(Date.now() / 1000));
+  const blockAt = (t: bigint): bigint => {
+    if (t >= nowSec) return head; // future (e.g. deadline not yet passed)
+    const back = (nowSec - t) * SOMNIA_BLOCKS_PER_SEC;
+    return head > back ? head - back : 0n;
+  };
+  const rawFrom = blockAt(startSec);
+  const fromBlock = rawFrom > bufferBlocks ? rawFrom - bufferBlocks : 0n;
+  let toBlock = blockAt(endSec) + bufferBlocks;
+  if (toBlock > head) toBlock = head;
+  if (toBlock < fromBlock) toBlock = head;
+  return { fromBlock, toBlock };
+}

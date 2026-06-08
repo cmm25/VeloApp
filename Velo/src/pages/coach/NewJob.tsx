@@ -17,7 +17,12 @@ import {
   useMinBountyFee,
   parseSttToWei,
 } from "@/lib/domain/bounties";
-import { useRegisteredAgents, skillLabel, isVisionSkill } from "@/lib/domain/agents";
+import {
+  useRegisteredAgents,
+  skillLabel,
+  isVisionSkill,
+  catalogVisionSkills,
+} from "@/lib/domain/agents";
 import { encodeJobSpec, skillHashOf } from "@/lib/domain/jobSpec";
 import { useAthleteDirectory, type Athlete } from "@/lib/domain/athletes";
 import {
@@ -100,6 +105,9 @@ export default function NewJob() {
   // sends the raw cid unchanged (see DEFAULT_MODEL_SKILL).
   const [selectedModel, setSelectedModel] = useState<Hex>(DEFAULT_MODEL_SKILL);
 
+  // Direct-mode deadline (hours from now); coach-editable like the bounty flow.
+  const [directDeadlineHours, setDirectDeadlineHours] = useState<number>(DEADLINE_HOURS);
+
   // Bounty mode
   const [mode, setMode] = useState<"direct" | "bounty">("bounty");
   const [bountyBudget, setBountyBudget] = useState<string>("");
@@ -117,11 +125,15 @@ export default function NewJob() {
     return Array.from(set) as Hex[];
   }, [registeredAgents]);
 
-  // Vision models a coach can route a DIRECT job to. Always includes the default
-  // pose model; any other registered "vision.*" agent skill is added so newly
-  // deployed analysis models appear automatically.
+  // Vision models a coach can route a DIRECT job to. Seeded with the known model
+  // catalog (the default pose model + the Serve model, etc.) so a coach can
+  // always choose; any other registered "vision.*" agent skill is merged in so
+  // newly deployed analysis models appear automatically.
   const visionModels = useMemo(() => {
-    const set = new Set<string>([DEFAULT_MODEL_SKILL.toLowerCase()]);
+    const set = new Set<string>([
+      DEFAULT_MODEL_SKILL.toLowerCase(),
+      ...catalogVisionSkills().map((s) => s.toLowerCase()),
+    ]);
     registeredAgents.forEach((a) =>
       a.skills.forEach((s) => {
         if (isVisionSkill(s)) set.add(s.toLowerCase());
@@ -360,10 +372,16 @@ export default function NewJob() {
       toast.error(`Fee must be at least ${formatStt(minFee)}`);
       return;
     }
+    if (directDeadlineHours <= 0) {
+      toast.error("Deadline must be in the future");
+      return;
+    }
 
     setIsSubmitting(true);
     try {
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + DEADLINE_HOURS * 3600);
+      const deadline = BigInt(
+        Math.floor(Date.now() / 1000) + directDeadlineHours * 3600,
+      );
       // Off-chain model routing: the default (pose) model sends the raw cid; any
       // other selected vision model encodes its skill into the videoCid so the
       // matching agent self-selects the job. recordRecentJob keeps the RAW cid.
@@ -827,15 +845,39 @@ export default function NewJob() {
                       <span className="font-mono text-xs text-muted-foreground">STT</span>
                     </div>
                   </div>
-                  <div className="flex justify-between items-center text-sm border-t border-border/50 pt-4">
-                    <span className="text-muted-foreground">Deadline</span>
-                    <span className="text-chalk font-mono font-medium">{DEADLINE_HOURS} hours</span>
+                  <div className="border-t border-border/50 pt-4">
+                    <label className="block text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">
+                      Deadline (hours from now)
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={directDeadlineHours}
+                      onChange={(e) =>
+                        setDirectDeadlineHours(
+                          Math.floor(Number(e.target.value)) || 0,
+                        )
+                      }
+                      className="w-full bg-input border border-border focus:border-amber focus:ring-1 focus:ring-amber rounded-sm px-3 py-2 text-chalk font-mono text-sm"
+                    />
+                    {directDeadlineHours > 0 && (
+                      <p className="text-[11px] text-muted-foreground font-light mt-2">
+                        Agent must submit before{" "}
+                        <span className="text-chalk/80">
+                          {new Date(
+                            Date.now() + directDeadlineHours * 3600 * 1000,
+                          ).toLocaleString()}
+                        </span>
+                        .
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 <button
                   onClick={handlePay}
-                  disabled={isSubmitting || !feeInput}
+                  disabled={isSubmitting || !feeInput || directDeadlineHours <= 0}
                   className="w-full bg-amber hover:bg-amber-soft text-ink py-4 font-bold tracking-wide rounded-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSubmitting ? "Confirming on chain…" : "Sign & submit session"}
@@ -869,8 +911,11 @@ export default function NewJob() {
                     <input
                       type="number"
                       min={1}
+                      step={1}
                       value={bountyDeadlineHours}
-                      onChange={(e) => setBountyDeadlineHours(Number(e.target.value) || 0)}
+                      onChange={(e) =>
+                        setBountyDeadlineHours(Math.floor(Number(e.target.value)) || 0)
+                      }
                       className="w-full bg-input border border-border focus:border-amber focus:ring-1 focus:ring-amber rounded-sm px-3 py-2 text-chalk font-mono text-sm"
                     />
                   </div>
@@ -1082,7 +1127,7 @@ export default function NewJob() {
                   value={
                     <span className="inline-flex items-center gap-1 font-mono text-xs text-chalk/80">
                       <Clock className="w-3 h-3 text-amber/70" />
-                      {mode === "bounty" ? bountyDeadlineHours : DEADLINE_HOURS}h from signing
+                      {mode === "bounty" ? bountyDeadlineHours : directDeadlineHours}h from signing
                     </span>
                   }
                 />

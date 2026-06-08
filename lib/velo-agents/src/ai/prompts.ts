@@ -60,6 +60,7 @@ Return a JSON object matching this schema exactly:
 }
 
 Rules:
+- "area" MUST be exactly one of: shoulder, elbow, wrist, hip, knee, footwork, balance, timing, symmetry. Map consistency/rhythm/tempo/sequencing issues to "timing", and left-right/asymmetry/stability issues to "symmetry" or "balance". Never invent other area values.
 - Maximum 5 issues, ordered by severity (critical first)
 - Maximum 3 strengths
 - overallScore: 8-10 = excellent, 6-7 = good, 4-5 = needs work, 0-3 = significant issues
@@ -70,89 +71,78 @@ Respond with ONLY the JSON object, no markdown, no explanation.`;
 }
 
 /**
- * ════════════════════════════════════════════════════════════════════════════
- *  ⚠  THE SINGLE SPECIALIZATION POINT for the external analysis model.
- * ════════════════════════════════════════════════════════════════════════════
- * Everything else about the second model agent is generic and already wired:
- * the HTTP client (external-model.ts), the on-chain registration, the routing,
- * the Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
+ * THE SINGLE SPECIALIZATION POINT for the external analysis model. Everything
+ * else about the second model agent is generic and already wired: the HTTP
+ * client (external-model.ts), the on-chain registration, the routing, the
+ * Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
  *
- * The model is still in training, so this prompt and `ExternalModelOutputSchema`
- * (schemas.ts) are deliberately GENERIC PLACEHOLDERS. They translate whatever the
- * model reports (aspect + metrics + observations) into the standard FormReport.
- *
- * WHEN THE REAL MODEL IS READY, finalize the integration in exactly three places:
- *   1. `ExternalModelOutputSchema` (schemas.ts) — tighten to the real output shape.
- *   2. This function — tailor the translation to the model's actual aspect/metrics.
- *   3. The skill name + label — `EXTERNAL_MODEL_SKILL` / `EXTERNAL_MODEL_NAME`
- *      (config) and the matching entry in the frontend's SKILL_NAMES catalog
- *      (Velo/src/lib/domain/agents.ts) so the picker shows a friendly name.
- * Until then, leave this as-is: it produces a valid report from generic input.
- * ════════════════════════════════════════════════════════════════════════════
+ * `ExternalModelOutputSchema` (schemas.ts) and this prompt are aligned to the
+ * deployed engine's POST /analyze-external FLAT contract (aspect + metrics +
+ * observations + confidence + notes), verified live. To point the Serve skill at
+ * a different model, update EXTERNAL_MODEL_SKILL / EXTERNAL_MODEL_NAME (config)
+ * and the matching SKILL_NAMES entry in Velo/src/lib/domain/agents.ts.
  */
 export function buildExternalModelPrompt(output: ExternalModelOutput): string {
-  const metrics = Object.entries(output.metrics)
-    .map(([k, v]) => `  ${k}: ${typeof v === "number" ? v.toFixed(2) : v}`)
-    .join("\n");
+  const m = output.metrics;
+  const gain = m.peak_proximal_to_distal_gain;
+  const pct = (v: number | null | undefined) =>
+    v == null ? "n/a" : `${(v * 100).toFixed(0)}%`;
+  const deg = (v: number | null | undefined) =>
+    v == null ? "n/a" : `${v.toFixed(1)}°`;
 
-  const observations = output.observations.map((o) => `  - ${o}`).join("\n");
-
-  return `You are a professional tennis biomechanics analyst. An independently-trained, aspect-specific vision model has analysed a tennis clip and emitted the structured measurements below. Translate its raw output into a coaching form analysis report.
+  return `You are a professional tennis biomechanics analyst. A YOLO11-pose vision model has analysed a tennis clip. Translate its measurements into a coaching form analysis report.
 
 MODEL OUTPUT:
-- Aspect analysed: ${output.aspect}
-${output.confidence != null ? `- Model confidence: ${(output.confidence * 100).toFixed(0)}%` : ""}
+- Detected aspect: ${output.aspect} (${m.stroke_count} strokes)
+- Consistency score: ${pct(m.consistency_score)}
+${gain != null ? `- Kinetic chain (proximal→distal gain): ${pct(gain)} (100% = textbook)` : ""}
+- Keypoint confidence: ${pct(m.mean_keypoint_confidence)} (overall model confidence ${pct(output.confidence)})
 
-Metrics:
-${metrics || "  (none provided)"}
+Peak joint angles (degrees):
+  Shoulder: ${deg(m.peak_shoulder_deg)} | Elbow: ${deg(m.peak_elbow_deg)} | Hip: ${deg(m.peak_hip_deg)} | Knee: ${deg(m.peak_knee_deg)}
+Peak wrist velocity (relative, torso-lengths/s): ${m.peak_wrist_velocity_tl_per_s != null ? m.peak_wrist_velocity_tl_per_s.toFixed(2) : "n/a"}
 
-Observations:
-${observations || "  (none provided)"}
+Engine observations:
+${output.observations.length ? output.observations.map((o) => `- ${o}`).join("\n") : "- (none reported)"}
+${output.notes ? `\nEngine notes: ${output.notes}` : ""}
 
-${output.notes ? `Model notes: ${output.notes}` : ""}
-
-TASK:
-Return a JSON object matching this schema exactly:
+TASK: Return a JSON object matching this schema exactly:
 {
-  "strokeType": "forehand" | "backhand" | "serve" | "volley" | "unknown",
-  "overallScore": <number 0-10>,
-  "issues": [
-    {
-      "area": "shoulder" | "elbow" | "wrist" | "hip" | "knee" | "footwork" | "balance" | "timing" | "symmetry",
-      "severity": "critical" | "moderate" | "minor",
-      "phase": "preparation" | "contact" | "follow_through" | "overall",
-      "observation": "<what is wrong, max 300 chars>",
-      "recommendation": "<what to fix, max 300 chars>"
-    }
-  ],
-  "strengths": [
-    { "area": "<area>", "observation": "<what is good, max 200 chars>" }
-  ],
-  "keyFindings": "<2-3 sentence clinical summary of the most important findings, max 500 chars>",
+  "strokeType": "forehand"|"backhand"|"serve"|"volley"|"unknown",
+  "overallScore": <0-10>,
+  "issues": [{ "area": "shoulder"|"elbow"|"wrist"|"hip"|"knee"|"footwork"|"balance"|"timing"|"symmetry", "severity": "critical"|"moderate"|"minor", "phase": "preparation"|"contact"|"follow_through"|"overall", "observation": "<max 300 chars>", "recommendation": "<max 300 chars>" }],
+  "strengths": [{ "area": "<area>", "observation": "<max 200 chars>" }],
+  "keyFindings": "<2-3 sentence summary, max 500 chars>",
   "analysedAt": "${new Date().toISOString()}"
 }
 
 Rules:
-- Base every judgement ONLY on the model output above — do not invent measurements it did not provide
-- Maximum 5 issues, ordered by severity (critical first)
-- Maximum 3 strengths
-- overallScore: 8-10 = excellent, 6-7 = good, 4-5 = needs work, 0-3 = significant issues
-- Map the model's aspect to the closest strokeType (use "unknown" if unclear)
-- keyFindings must be usable by a coach reading it on their phone
-
-Respond with ONLY the JSON object, no markdown, no explanation.`;
+- "area" MUST be exactly one of: shoulder, elbow, wrist, hip, knee, footwork, balance, timing, symmetry. Map consistency/rhythm/tempo/sequencing issues to "timing", and left-right/asymmetry/stability issues to "symmetry" or "balance". Never use "consistency" or any other value.
+- Reference actual angle values from the data
+- Maximum 5 issues (critical first), 3 strengths
+- overallScore: 8-10 excellent, 6-7 good, 4-5 needs work, 0-3 significant issues
+- If kinetic chain gain < 60%, flag as a timing/sequencing issue
+- Respond with ONLY the JSON object, no markdown`;
 }
-
 /**
  * Builds the extraction prompt for the LLM Parse Website agent — a search for one
  * real coaching tip targeting the diagnosed stroke fault.
  */
 export function buildTechniqueQueryPrompt(formReport: FormReport): string {
   const primary = formReport.issues[0];
-  const focus = primary
-    ? `the ${formReport.strokeType} ${primary.area} during ${primary.phase} (${primary.observation})`
-    : `the ${formReport.strokeType}`;
-  return `Find one concise, actionable coaching tip to improve ${focus} in tennis. Respond with a single practical sentence an athlete can apply.`;
+  if (!primary) {
+    return `Find one concise, actionable coaching tip to improve the ${formReport.strokeType} in tennis. Respond with a single practical sentence an athlete can apply.`;
+  }
+  // Ground the search in the specific diagnosed fault — area, phase, what was
+  // observed, and the recommended fix — so the extracted tip is relevant to THIS
+  // athlete's fault rather than a generic stroke tip.
+  const fault = `the ${formReport.strokeType} ${primary.area} during the ${primary.phase} phase`;
+  return [
+    `Find one concise, actionable tennis coaching tip to fix ${fault}.`,
+    `Diagnosed fault: ${primary.observation}`,
+    `Coach's recommendation to address it: ${primary.recommendation}`,
+    `Return a single practical sentence the athlete can apply that reinforces or expands on that recommendation.`,
+  ].join(" ");
 }
 
 export function buildPrescriptionPrompt(

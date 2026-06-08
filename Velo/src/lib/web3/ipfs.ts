@@ -7,17 +7,25 @@ export function useIpfsJson(cid: string | undefined) {
     enabled: !!cid && !cid.startsWith("local:"),
     staleTime: 5 * 60 * 1000,
     retry: 1,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       if (!cid) return null;
-      const res = await fetch(ipfsGatewayUrl(cid));
-      if (!res.ok) throw new Error(`ipfs ${res.status}`);
-      const ct = res.headers.get("content-type") ?? "";
-      if (ct.includes("application/json") || ct.includes("text/json")) return res.json();
-      const text = await res.text();
+      // Cap a slow/unreachable gateway so the UI fails fast instead of hanging.
+      const ctrl = new AbortController();
+      const timeout = setTimeout(() => ctrl.abort(), 15_000);
+      signal?.addEventListener("abort", () => ctrl.abort());
       try {
-        return JSON.parse(text);
-      } catch {
-        return null;
+        const res = await fetch(ipfsGatewayUrl(cid), { signal: ctrl.signal });
+        if (!res.ok) throw new Error(`ipfs ${res.status}`);
+        const ct = res.headers.get("content-type") ?? "";
+        if (ct.includes("application/json") || ct.includes("text/json")) return res.json();
+        const text = await res.text();
+        try {
+          return JSON.parse(text);
+        } catch {
+          return null;
+        }
+      } finally {
+        clearTimeout(timeout);
       }
     },
   });
@@ -32,6 +40,36 @@ export function summaryFromReport(json: unknown): string | null {
     if (typeof v === "string" && v.trim()) return v.trim();
   }
   return null;
+}
+
+export type TechniqueReferenceView = {
+  tip: string;
+  sourceUrl: string | null;
+  receiptUrl: string | null;
+};
+
+/** Best-effort extraction of the verified technique reference from receipt JSON. */
+export function techniqueReferenceFromJson(json: unknown): TechniqueReferenceView | null {
+  if (!json || typeof json !== "object") return null;
+  const j = json as Record<string, unknown>;
+  const ref =
+    j["techniqueReference"] && typeof j["techniqueReference"] === "object"
+      ? (j["techniqueReference"] as Record<string, unknown>)
+      : null;
+  if (!ref) return null;
+  const tip = typeof ref["tip"] === "string" ? ref["tip"].trim() : "";
+  if (!tip) return null;
+  const sourceUrl =
+    typeof ref["sourceUrl"] === "string" && ref["sourceUrl"].startsWith("http")
+      ? ref["sourceUrl"]
+      : null;
+  const somnia =
+    ref["somnia"] && typeof ref["somnia"] === "object"
+      ? (ref["somnia"] as Record<string, unknown>)
+      : null;
+  const url = somnia?.["receiptUrl"];
+  const receiptUrl = typeof url === "string" && url.startsWith("http") ? url : null;
+  return { tip, sourceUrl, receiptUrl };
 }
 
 /** Best-effort extraction of Somnia consensus receipt URL from receipt JSON. */
