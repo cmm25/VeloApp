@@ -69,7 +69,3 @@ replit.nix
 /scripts/
 /reference-files-eshaan/
 /docs/
-
-# ── System Design document (Task 17) — committed deliverable. Overrides the
-#    blanket *.pdf rule above so this one PDF is tracked. ────────────────────
-!design/Velo_System_Design.pdf
