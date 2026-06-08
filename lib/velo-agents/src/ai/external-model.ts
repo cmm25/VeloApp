@@ -61,9 +61,10 @@ export async function callExternalModel(
   }
 
   log.info("External model output received", {
-    dominantStroke: parsed.data.summary.dominantStroke,
-    strokeCount: parsed.data.summary.strokeCount,
-    consistencyScore: parsed.data.aggregate.consistencyScore,
+    aspect: parsed.data.aspect,
+    strokeCount: parsed.data.metrics.stroke_count,
+    consistencyScore: parsed.data.metrics.consistency_score,
+    confidence: parsed.data.confidence,
   });
   return parsed.data;
 }

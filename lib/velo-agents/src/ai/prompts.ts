@@ -77,42 +77,36 @@ Respond with ONLY the JSON object, no markdown, no explanation.`;
  * the HTTP client (external-model.ts), the on-chain registration, the routing,
  * the Prescriber chaining, and the UI card all work for ANY tennis-aspect model.
  *
- * The model is still in training, so this prompt and `ExternalModelOutputSchema`
- * (schemas.ts) are deliberately GENERIC PLACEHOLDERS. They translate whatever the
- * model reports (aspect + metrics + observations) into the standard FormReport.
- *
- * WHEN THE REAL MODEL IS READY, finalize the integration in exactly three places:
- *   1. `ExternalModelOutputSchema` (schemas.ts) — tighten to the real output shape.
- *   2. This function — tailor the translation to the model's actual aspect/metrics.
- *   3. The skill name + label — `EXTERNAL_MODEL_SKILL` / `EXTERNAL_MODEL_NAME`
- *      (config) and the matching entry in the frontend's SKILL_NAMES catalog
- *      (Velo/src/lib/domain/agents.ts) so the picker shows a friendly name.
- * Until then, leave this as-is: it produces a valid report from generic input.
+ * `ExternalModelOutputSchema` (schemas.ts) and this prompt are aligned to the
+ * deployed engine's POST /analyze-external FLAT contract (aspect + metrics +
+ * observations + confidence + notes), verified live. To point the Serve skill at
+ * a different model, update EXTERNAL_MODEL_SKILL / EXTERNAL_MODEL_NAME (config)
+ * and the matching SKILL_NAMES entry in Velo/src/lib/domain/agents.ts.
  * ════════════════════════════════════════════════════════════════════════════
  */
 export function buildExternalModelPrompt(output: ExternalModelOutput): string {
-  const s = output.summary;
-  const gain = output.aggregate.peakProximalToDistalGain;
+  const m = output.metrics;
+  const gain = m.peak_proximal_to_distal_gain;
+  const pct = (v: number | null | undefined) =>
+    v == null ? "n/a" : `${(v * 100).toFixed(0)}%`;
+  const deg = (v: number | null | undefined) =>
+    v == null ? "n/a" : `${v.toFixed(1)}°`;
 
   return `You are a professional tennis biomechanics analyst. A YOLO11-pose vision model has analysed a tennis clip. Translate its measurements into a coaching form analysis report.
 
 MODEL OUTPUT:
-- Dominant stroke: ${s.dominantStroke} (${s.strokeCount} strokes)
-- Duration: ${(s.durationMs / 1000).toFixed(1)}s, ${s.framesAnalyzed} frames analysed
-- Consistency score: ${(output.aggregate.consistencyScore * 100).toFixed(0)}%
-${gain != null ? `- Kinetic chain (proximal→distal gain): ${(gain * 100).toFixed(0)}% (100% = textbook)` : ""}
-- Keypoint confidence: ${(output.quality.meanKeypointConfidence * 100).toFixed(0)}%
-- Clip quality ok: ${output.quality.clipQualityOk}
+- Detected aspect: ${output.aspect} (${m.stroke_count} strokes)
+- Consistency score: ${pct(m.consistency_score)}
+${gain != null ? `- Kinetic chain (proximal→distal gain): ${pct(gain)} (100% = textbook)` : ""}
+- Keypoint confidence: ${pct(m.mean_keypoint_confidence)} (overall model confidence ${pct(output.confidence)})
 
-Peak angles (degrees):
-  Shoulder: ${s.peakAngles.shoulder.toFixed(1)}° | Elbow: ${s.peakAngles.elbow.toFixed(1)}° | Wrist: ${s.peakAngles.wrist.toFixed(1)}°
-  Hip: ${s.peakAngles.hip.toFixed(1)}° | Knee: ${s.peakAngles.knee.toFixed(1)}°
+Peak joint angles (degrees):
+  Shoulder: ${deg(m.peak_shoulder_deg)} | Elbow: ${deg(m.peak_elbow_deg)} | Hip: ${deg(m.peak_hip_deg)} | Knee: ${deg(m.peak_knee_deg)}
+Peak wrist velocity (relative, torso-lengths/s): ${m.peak_wrist_velocity_tl_per_s != null ? m.peak_wrist_velocity_tl_per_s.toFixed(2) : "n/a"}
 
-Average angles (degrees):
-  Shoulder: ${s.avgAngles.shoulder.toFixed(1)}° | Elbow: ${s.avgAngles.elbow.toFixed(1)}° | Wrist: ${s.avgAngles.wrist.toFixed(1)}°
-  Hip: ${s.avgAngles.hip.toFixed(1)}° | Knee: ${s.avgAngles.knee.toFixed(1)}°
-
-${s.analysisNotes ? `Engine notes: ${s.analysisNotes}` : ""}
+Engine observations:
+${output.observations.length ? output.observations.map((o) => `- ${o}`).join("\n") : "- (none reported)"}
+${output.notes ? `\nEngine notes: ${output.notes}` : ""}
 
 TASK: Return a JSON object matching this schema exactly:
 {
