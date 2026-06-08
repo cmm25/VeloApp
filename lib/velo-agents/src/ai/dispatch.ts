@@ -6,6 +6,7 @@ import { callAI } from "./groq.js";
 import {
   runLlmInference,
   nativeAgentsConfigured,
+  signerHasOperatorRole,
   SomniaAgentsUnavailable,
   type SomniaAgentReceipt,
 } from "./somnia-agents.js";
@@ -49,6 +50,20 @@ export async function reason<T>(opts: {
   const { prompt, schema, label, signer } = opts;
 
   if (nativeAgentsConfigured()) {
+    // Preflight: the relay's request() is OPERATOR_ROLE-gated. Without the role
+    // every native call reverts AccessControlUnauthorizedAccount, so skip
+    // straight to Groq with one clear, actionable warning (cached per signer).
+    if (!(await signerHasOperatorRole(signer))) {
+      const reasonMsg =
+        `signer ${signer.address} lacks OPERATOR_ROLE on the relay — using Groq. ` +
+        `Grant it with Hardhat/scripts/grant-operator-role.ts to enable the native path.`;
+      log.warn(`Native path unavailable [${label}] — falling back to Groq`, { reason: reasonMsg });
+      const data = await callAI(prompt, schema, label);
+      return {
+        data,
+        provenance: { path: "fallback", agentType: "llm-inference", fallbackReason: reasonMsg },
+      };
+    }
     try {
       log.info(`Reasoning via Somnia native agent [${label}]…`);
       const native = await runLlmInference(SYSTEM_PROMPT, prompt, signer);

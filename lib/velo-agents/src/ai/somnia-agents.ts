@@ -45,6 +45,8 @@ const RELAY_ABI = [
   "function request(uint256 agentId, bytes payload) payable returns (uint256 requestId)",
   "function getRequestDeposit() view returns (uint256)",
   "function getResult(uint256 requestId) view returns (bool ready, uint8 status)",
+  "function OPERATOR_ROLE() view returns (bytes32)",
+  "function hasRole(bytes32 role, address account) view returns (bool)",
   "event RelayRequestCreated(uint256 indexed requestId, uint256 indexed agentId, address indexed operator)",
   "event ResultReady(uint256 indexed requestId, uint8 status, bytes result)",
 ] as const;
@@ -136,6 +138,39 @@ export function parseWebsiteConfigured(): boolean {
     !!config.somniaAgents.parseWebsiteAgentId &&
     config.somniaAgents.parseWebsiteAgentId !== "0"
   );
+}
+
+// Per-signer cache of OPERATOR_ROLE membership on the relay. A wallet's grant
+// status is effectively static for a runner's lifetime, so we check once and
+// reuse it instead of paying an RPC round-trip (and risking a revert) per job.
+const _operatorRoleCache = new Map<string, boolean>();
+
+/**
+ * Whether `signer` holds OPERATOR_ROLE on the relay (cached). The relay's
+ * `request(...)` is `onlyRole(OPERATOR_ROLE)`, so a wallet without the role
+ * makes every native call revert `AccessControlUnauthorizedAccount`. Checking
+ * first lets the caller skip straight to Groq with one clear warning instead of
+ * eating a gas-estimation revert on every request. Returns false (skip native)
+ * when the relay is unset or the check itself fails.
+ */
+export async function signerHasOperatorRole(signer: ethers.Wallet): Promise<boolean> {
+  if (!config.somniaAgents.relayAddress) return false;
+  const key = signer.address.toLowerCase();
+  const cached = _operatorRoleCache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const relay = getRelayContract(signer);
+    const role = await relay.OPERATOR_ROLE();
+    const has = Boolean(await relay.hasRole(role, signer.address));
+    _operatorRoleCache.set(key, has);
+    return has;
+  } catch (err) {
+    log.warn("OPERATOR_ROLE check failed — assuming not granted (will use Groq)", {
+      address: signer.address,
+      error: errMsg(err),
+    });
+    return false;
+  }
 }
 
 function statusName(s: number): string {

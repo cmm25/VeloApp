@@ -7,7 +7,7 @@ import { handleJobRequested } from "./agents/form-agent.js";
 import { handleExternalJobRequested } from "./agents/external-model-agent.js";
 import { handleFormReceiptSubmitted } from "./agents/prescriber-agent.js";
 import { handleBountyAccepted } from "./agents/bounty-agent.js";
-import { registerAgentsOnChain } from "./chain/contracts.js";
+import { registerAgentsOnChain, logAgentOperatorRoles } from "./chain/contracts.js";
 
 const log = makeLogger("runner");
 
@@ -37,6 +37,14 @@ async function main() {
   
   await registerAgentsOnChain(apiBase).catch((err) => {
     log.warn("On-chain agent registration failed (non-fatal — agents can still process jobs)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+
+  // Startup self-check: report which agent EOAs hold OPERATOR_ROLE on the relay,
+  // so a missing grant (which forces Groq instead of the native path) is obvious.
+  await logAgentOperatorRoles().catch((err) => {
+    log.warn("OPERATOR_ROLE self-check failed (non-fatal)", {
       error: err instanceof Error ? err.message : String(err),
     });
   });
