@@ -1,7 +1,7 @@
 {
     "outputDirectory": "dist/public",
     "rewrites": [
-        { "source": "/api/(.*)", "destination": "https://veloapp-agents.onrender.com/api/$1" },
+        { "source": "/api/(.*)", "destination": "https://velo-agents-theportal-74fa8de8.koyeb.app/api/$1" },
         { "source": "/(.*)", "destination": "/index.html" }
     ]
 }
