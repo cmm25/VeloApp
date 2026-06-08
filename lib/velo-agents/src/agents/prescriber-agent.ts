@@ -10,6 +10,7 @@ import {
   getPrescriberWallet,
   fetchNonce,
   fetchFormReceipt,
+  fetchJob,
   submitPrescriptionTx,
 } from "../chain/contracts.js";
 import {
@@ -18,9 +19,56 @@ import {
   signReceipt,
 } from "../chain/eip712.js";
 import { upsertReceipt, getReceipt } from "../api/store.js";
-import type { FormReceiptEvent } from "../chain/abi.js";
+import { JobStatus, type FormReceiptEvent } from "../chain/abi.js";
 
 const log = makeLogger("prescriber-agent");
+
+/** Selector of `JobNotFormSubmitted()` — revert when the job already left FormSubmitted. */
+const JOB_NOT_FORM_SUBMITTED_SELECTOR = "0x83478430";
+
+/**
+ * The job has already been settled (Completed) or cancelled — a prescription is
+ * moot. submitPrescription() only accepts a job in FormSubmitted, so any other
+ * state means another prescriber instance (or a restart) already handled it.
+ */
+function prescriptionMoot(status: number): boolean {
+  return status === JobStatus.Completed || status === JobStatus.Cancelled;
+}
+
+/** True if a revert is the `JobNotFormSubmitted()` custom error (any ethers shape). */
+function isJobNotFormSubmittedError(err: unknown): boolean {
+  const e = err as {
+    revert?: { name?: string };
+    data?: unknown;
+    error?: { data?: unknown; error?: { data?: unknown } };
+    info?: { error?: { data?: unknown } };
+    message?: unknown;
+  };
+  if (e?.revert?.name === "JobNotFormSubmitted") return true;
+  const candidates = [e?.data, e?.error?.data, e?.error?.error?.data, e?.info?.error?.data];
+  for (const d of candidates) {
+    if (typeof d === "string" && d.toLowerCase().startsWith(JOB_NOT_FORM_SUBMITTED_SELECTOR)) {
+      return true;
+    }
+  }
+  const msg = typeof e?.message === "string" ? e.message.toLowerCase() : "";
+  return msg.includes(JOB_NOT_FORM_SUBMITTED_SELECTOR) || msg.includes("jobnotformsubmitted");
+}
+
+/**
+ * Decide whether a failed submit is actually "someone else already finished the
+ * job" rather than a real error. Authoritative check is the on-chain status; the
+ * error selector is a fast path used before the extra RPC round-trip.
+ */
+async function prescriptionAlreadySettled(jobId: string, err: unknown): Promise<boolean> {
+  if (isJobNotFormSubmittedError(err)) return true;
+  try {
+    const job = await fetchJob(jobId);
+    return prescriptionMoot(job.status);
+  } catch {
+    return false;
+  }
+}
 
 /**
  * PrescriberAgent — triggered by FormReceiptSubmitted events.
@@ -49,6 +97,23 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
 
   await withRetry(
     async () => {
+      // 0. Idempotency / race guard. Multiple runner instances (or a restart
+      //    re-scanning old blocks) can react to the same FormReceiptSubmitted
+      //    event with the same prescriber key. Only one tx can move the job
+      //    FormSubmitted → Completed; the rest would revert JobNotFormSubmitted.
+      //    Skip up front if the job already left FormSubmitted so we neither
+      //    waste an AI/IPFS round-trip nor spam retries. (Requested/None are
+      //    left to proceed — they only mean read-after-write RPC lag, which the
+      //    retry below absorbs.)
+      const jobAtStart = await fetchJob(jobId);
+      if (prescriptionMoot(jobAtStart.status)) {
+        log.info("Job already settled/cancelled — skipping prescription (no-op)", {
+          jobId,
+          status: jobAtStart.status,
+        });
+        return;
+      }
+
       // 1. Read form receipt ON-CHAIN — this is the cryptographic proof of reading
       const formReceipt = await fetchFormReceipt(jobId);
       log.info("Form receipt read from chain", {
@@ -165,7 +230,33 @@ export async function handleFormReceiptSubmitted(event: FormReceiptEvent): Promi
 
       // 7. Sign + submit — will revert if priorReceiptHash doesn't match on-chain
       const signature = await signReceipt(wallet, receipt, config.contracts.orchestrator);
-      const txReceipt = await submitPrescriptionTx(receipt, signature, wallet);
+
+      // Re-check immediately before submitting: the AI + IPFS work above takes
+      // time, during which another prescriber may have completed the job. This
+      // narrows (but cannot fully close) the race window — the catch below is the
+      // authoritative backstop.
+      const jobBeforeSubmit = await fetchJob(jobId);
+      if (prescriptionMoot(jobBeforeSubmit.status)) {
+        log.info("Job completed by another agent during analysis — skipping submit (no-op)", {
+          jobId,
+          status: jobBeforeSubmit.status,
+        });
+        return;
+      }
+
+      let txReceipt: Awaited<ReturnType<typeof submitPrescriptionTx>>;
+      try {
+        txReceipt = await submitPrescriptionTx(receipt, signature, wallet);
+      } catch (err) {
+        // Lost the race: another prescriber moved the job to Completed first, so
+        // submitPrescription reverts with JobNotFormSubmitted. The session still
+        // succeeded — treat it as a no-op success instead of erroring + retrying.
+        if (await prescriptionAlreadySettled(jobId, err)) {
+          log.info("Prescription already submitted by another agent — no-op success", { jobId });
+          return;
+        }
+        throw err;
+      }
 
       log.info("Prescription submitted ✓ — escrow split + SBT updated", {
         jobId,
