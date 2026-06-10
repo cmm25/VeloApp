@@ -69,3 +69,23 @@ replit.nix
 /scripts/
 /reference-files-eshaan/
 /docs/
+
+# ── Local ML envs, datasets, model weights & run outputs ─────────────────────
+#    Large, machine-generated or downloaded — kept on disk, never committed.
+#    (Nothing here is deleted; these rules just stop git/VSCode showing them.)
+.ls-venv/
+.venv-*/
+# model weights (e.g. yolo11s-pose.pt)
+*.pt
+# training run outputs
+runs/
+# pose visualisation overlays
+lib/velo-engine/overlays/
+# training scripts, datasets & local envs
+lib/velo-training/
+# local e2e verification harness
+lib/velo-agents/verify_*.ts
+
+# ── Local tool / deploy configs ──────────────────────────────────────────────
+.claude/
+.vercel/
