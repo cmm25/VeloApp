@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Velo Tier-1 Pose Model — Experiment Report</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #2c3e50;
+            background-color: #f8f9fa;
+            padding: 40px 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 50px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        h1 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 12px;
+            color: #1a252f;
+        }
+
+        .subtitle {
+            font-size: 16px;
+            color: #7f8c8d;
+            margin-bottom: 40px;
+            font-style: italic;
+        }
+
+        h2 {
+            font-size: 20px;
+            font-weight: 600;
+            margin-top: 40px;
+            margin-bottom: 20px;
+            color: #1a252f;
+            border-bottom: 2px solid #ecf0f1;
+            padding-bottom: 10px;
+        }
+
+        h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 20px;
+            margin-bottom: 12px;
+            color: #34495e;
+        }
+
+        p {
+            margin-bottom: 16px;
+            line-height: 1.7;
+        }
+
+        .goal-method {
+            background-color: #f0f7ff;
+            border-left: 4px solid #3498db;
+            padding: 20px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+
+        .goal-method strong {
+            color: #2980b9;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 24px;
+            font-size: 14px;
+        }
+
+        table thead {
+            background-color: #34495e;
+            color: white;
+        }
+
+        table th {
+            padding: 14px;
+            text-align: left;
+            font-weight: 600;
+            border: 1px solid #2c3e50;
+        }
+
+        table td {
+            padding: 12px 14px;
+            border: 1px solid #ecf0f1;
+        }
+
+        table tbody tr:nth-child(odd) {
+            background-color: #f8f9fa;
+        }
+
+        table tbody tr:nth-child(even) {
+            background-color: white;
+        }
+
+        .cell-baseline {
+            color: #7f8c8d;
+            font-style: italic;
+        }
+
+        .cell-fail {
+            background-color: #fadbd8;
+            color: #c0392b;
+            font-weight: 600;
+        }
+
+        .cell-amber {
+            background-color: #fef5e7;
+            color: #d68910;
+            font-weight: 600;
+        }
+
+        .cell-win {
+            background-color: #d5f4e6;
+            color: #27ae60;
+            font-weight: 600;
+        }
+
+        .intro-line {
+            font-style: italic;
+            color: #7f8c8d;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+
+        .footnote {
+            font-size: 13px;
+            color: #7f8c8d;
+            margin-top: 16px;
+            padding-top: 12px;
+            border-top: 1px solid #ecf0f1;
+            font-style: italic;
+        }
+
+        ul {
+            margin-left: 24px;
+            margin-bottom: 20px;
+        }
+
+        li {
+            margin-bottom: 12px;
+            line-height: 1.7;
+        }
+
+        .honesty-notes {
+            background-color: #fef9e7;
+            border-left: 4px solid #f39c12;
+            padding: 16px;
+            border-radius: 4px;
+            margin-top: 40px;
+            font-size: 13px;
+            color: #7f5d1a;
+            line-height: 1.6;
+        }
+
+        .footer {
+            margin-top: 50px;
+            padding-top: 30px;
+            border-top: 1px solid #ecf0f1;
+            text-align: center;
+            font-size: 12px;
+            color: #95a5a6;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Velo Tier-1 Pose Model — Experiment Report</h1>
+        <p class="subtitle">What we tried, what failed, and the honest conclusion (2026-06-03 → 06-04)</p>
+
+        <h2>Goal & Method</h2>
+        <div class="goal-method">
+            <p><strong>Goal:</strong> a robust tennis pose model (17 COCO keypoints) whose joint-angle telemetry feeds the LLM coach. "Robust" = good on HARD real footage (occlusion, motion blur, two people), not just clean clips.</p>
+            <p><strong>Method:</strong> we built a HARD, human-verified eval set ("hardval_gold", 60 frames from Mixkit clips, labels human-corrected in Label Studio). Every model is judged on it by OKS pose mAP50 (coarse) and mAP50-95 (fine keypoint precision — the number that drives joint-angle quality). The bar to beat = stock yolo11s-pose: pose_mAP50 0.762, mAP50-95 0.466.</p>
+            <p><strong>Compute:</strong> Modal A10G GPU, ~$3 of a $40 budget spent.</p>
+        </div>
+
+        <h2>What We Tried & What Happened</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Experiment</th>
+                    <th>What It Was</th>
+                    <th>hardval mAP50</th>
+                    <th>hardval mAP50-95</th>
+                    <th>Result</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Stock yolo11s-pose</td>
+                    <td>COCO-pretrained baseline (the bar)</td>
+                    <td>0.762</td>
+                    <td>0.466</td>
+                    <td class="cell-baseline">— baseline</td>
+                </tr>
+                <tr>
+                    <td>#1 Naive finetune</td>
+                    <td>finetune on ~1,610 mostly-easy tennis images</td>
+                    <td>0.149</td>
+                    <td>0.091</td>
+                    <td class="cell-fail">FAILED — catastrophic forgetting: aced easy clips, collapsed on hard ones</td>
+                </tr>
+                <tr>
+                    <td>A1 Replay + diverse-val</td>
+                    <td>yolo11s + 3,000 COCO-person replay (anti-forgetting) + checkpoint selected on a diverse val</td>
+                    <td>0.773</td>
+                    <td>0.396</td>
+                    <td class="cell-amber">NO-SHIP — fixed the collapse, beats baseline on coarse, but regresses on precision</td>
+                </tr>
+                <tr>
+                    <td>STEP 3 Hard pseudo-labels</td>
+                    <td>auto-label hard footage with a strong teacher to add hard training signal</td>
+                    <td>n/a</td>
+                    <td>n/a</td>
+                    <td class="cell-fail">FAILED to scale — only 22 of 238 frames usable: the teacher can't confidently label the very hard frames we need (the 'pseudo-label paradox')</td>
+                </tr>
+                <tr>
+                    <td>C1 Capacity bump</td>
+                    <td>yolo11m (2x capacity) + replay + 22 hard frames</td>
+                    <td>0.756</td>
+                    <td>0.379</td>
+                    <td class="cell-fail">NO-SHIP — worse than A1 and baseline; doubling capacity did NOT help. Proves the bottleneck is DATA, not model size</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h2>The Key Finding: Stock Model Size Wins</h2>
+        <p class="intro-line">Since finetuning on our (easy) data kept hurting hard cases, we evaluated bigger STOCK models directly — no training. Bigger stock models beat yolo11s for free.</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Stock Model</th>
+                    <th>hardval mAP50</th>
+                    <th>hardval mAP50-95</th>
+                    <th>vs yolo11s Precision</th>
+                    <th>Rel. CPU Cost</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>yolo11s (current)</td>
+                    <td>0.762</td>
+                    <td>0.466</td>
+                    <td class="cell-baseline">baseline</td>
+                    <td>1x</td>
+                </tr>
+                <tr>
+                    <td>yolo26s</td>
+                    <td>0.748</td>
+                    <td>0.481</td>
+                    <td>+0.015</td>
+                    <td>~0.95x (faster)</td>
+                </tr>
+                <tr>
+                    <td>yolo11m</td>
+                    <td>0.910</td>
+                    <td>0.552</td>
+                    <td>+0.086</td>
+                    <td>~2x</td>
+                </tr>
+                <tr>
+                    <td>yolo11l</td>
+                    <td>0.893</td>
+                    <td>0.602</td>
+                    <td class="cell-win">+0.136 (+29%)</td>
+                    <td>~2.7x</td>
+                </tr>
+                <tr>
+                    <td>yolo11x</td>
+                    <td>0.944</td>
+                    <td>0.728*</td>
+                    <td>+0.262*</td>
+                    <td>~5.4x</td>
+                </tr>
+                <tr>
+                    <td>yolo26m</td>
+                    <td>0.843</td>
+                    <td>0.543</td>
+                    <td>+0.077</td>
+                    <td>~2.4x</td>
+                </tr>
+            </tbody>
+        </table>
+        <p class="footnote">* yolo11x's score is inflated — the hardval_gold labels were human-corrected over yolo11x's own draft predictions, giving it a 'home advantage'. The bias-free models (11m / 11l / 26s / 26m) all still beat yolo11s.</p>
+
+        <h2>Conclusions</h2>
+        <ul>
+            <li>Finetuning the body keypoints on the data we can realistically get HURTS hard-case performance (3 for 3 regressions). It is off the table.</li>
+            <li>The bottleneck is hard-case training DATA, not model capacity — and cheap hard data does not exist (the teacher can't label the hard frames; human labeling does not scale).</li>
+            <li>The robust, honest win is to use a bigger STOCK model: yolo11l gives +29% hard-case keypoint precision for $0 and no training (one-line config swap). Since clips are analyzed as a batch job (~1 min/clip), the extra latency is acceptable.</li>
+            <li>A stock backbone is the right call — even pro systems (Hawk-Eye, SwingVision) use off-the-shelf detectors. Velo's defensible custom value is the layer NO open-source project ships: deterministic per-joint telemetry + kinematic-sequence analysis (legs→hips→trunk→shoulder→wrist timing), and optionally a custom velo19 racket-keypoint model (racket_butt + racket_tip → true wrist-snap / contact point) that no stock model offers.</li>
+        </ul>
+
+        <div class="honesty-notes">
+            <strong>Honesty notes:</strong> hardval_gold is recall-light (mean 9.9/17 joints labeled; OKS ignores unlabeled), so it's a fair RELATIVE comparison, not absolute ground truth. We also caught and removed a fabricated statistic ("34.4→76.0") that had crept into an internal spec.
+        </div>
+
+        <div class="footer">
+            <p>Velo — generated 2026-06-04. All numbers measured on hardval_gold/test via OKS pose mAP (Ultralytics).</p>
+        </div>
+    </div>
+</body>
+</html>

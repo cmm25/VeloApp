@@ -1,0 +1,5 @@
+# Minimal deps for prepare_dataset.py (download + inspect + merge).
+# NO torch / ultralytics / modal → no heavy build, fast install.
+# Use Python 3.11 (matches the Docker image; avoids 3.13 numpy source-build hell).
+roboflow>=1.1.50
+pyyaml>=6.0

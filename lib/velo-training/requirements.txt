@@ -1,0 +1,6 @@
+# Velo training — local / Colab / RunPod. (Modal installs its own image in train.py.)
+ultralytics==8.3.40
+roboflow>=1.1.50
+pyyaml>=6.0
+modal>=0.64            # only needed for the Modal path
+openai>=1.0            # gatekeeper.py — OpenAI-compatible multimodal client (DeepSeek V4 / Gemini / etc.)

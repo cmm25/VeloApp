@@ -1,0 +1,20 @@
+[
+  {
+    "weights": "/Volumes/DevSSD/Projects/2026/VeloApp/lib/velo-engine/yolo11s-pose.pt",
+    "split": "val",
+    "pose_map50_95": 0.5148,
+    "pose_map50": 0.9591,
+    "pose_map75": 0.5036,
+    "box_map50_95": 0.3639,
+    "box_map50": 0.7856
+  },
+  {
+    "weights": "weights/m_replay3k.pt",
+    "split": "val",
+    "pose_map50_95": 0.9233,
+    "pose_map50": 0.9918,
+    "pose_map75": 0.984,
+    "box_map50_95": 0.8035,
+    "box_map50": 0.995
+  }
+]
