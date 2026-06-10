@@ -3,34 +3,69 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
 <title>Velo — System Architecture</title>
+<script>
+  /* set theme before paint to avoid a flash */
+  (function(){
+    try{
+      var t = localStorage.getItem('velo-theme');
+      if(!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', t);
+    }catch(e){ document.documentElement.setAttribute('data-theme','light'); }
+  })();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700;9..144,900&family=Archivo:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
+    /* ---- LIGHT (default · academic paper) ---- */
+    --bg:#fbfbf8; --bg-2:#f3f4ef; --panel:#ffffff; --panel-2:#f6f7f2;
+    --line:#e0e3dc; --line-soft:#ecefe8;
+    --ink:#15191c; --ink-2:#475259; --ink-3:#8a949b;
+    --lime:#5b7910; --lime-dim:#6f8c2a; --cyan:#0c897c; --amber:#a76a12;
+    --coral:#bf4330; --violet:#5a49c2;
+    --sel:#dff0a6; --sel-ink:#1f2a00;
+    --glow1:rgba(91,121,16,.045); --glow2:rgba(12,137,124,.04); --glow3:rgba(90,73,194,.035);
+    --grain:.02; --topbar-bg:rgba(251,251,248,.8);
+    --frame-fill:rgba(90,73,194,.05); --frame-line:#cdd0e6;
+    --radius:14px; --maxw:1140px;
+  }
+  :root[data-theme="dark"]{
+    /* ---- DARK ---- */
     --bg:#0a0e12; --bg-2:#0f151b; --panel:#131c24; --panel-2:#18232d;
     --line:#243440; --line-soft:#1c2832;
     --ink:#e8eef2; --ink-2:#9fb1bd; --ink-3:#6a7d8a;
     --lime:#c6f24e; --lime-dim:#8aa838; --cyan:#34d3c4; --amber:#f2a93b;
     --coral:#ef6f5b; --violet:#9b8cf0;
-    --radius:14px; --maxw:1140px;
+    --sel:#c6f24e; --sel-ink:#0a0e12;
+    --glow1:rgba(198,242,78,.07); --glow2:rgba(52,211,196,.06); --glow3:rgba(155,140,240,.05);
+    --grain:.025; --topbar-bg:rgba(10,14,18,.72);
+    --frame-fill:rgba(155,140,240,.05); --frame-line:#33304a;
   }
+  html{color-scheme:light dark}
+  body,.topbar,.diagram,.plane,.chip,.step,.dcard,.pstage,.ctable,.metric,.meta-strip,.callout{transition:background-color .3s ease,border-color .3s ease,color .3s ease}
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
   body{background:var(--bg);color:var(--ink);font-family:'Archivo',sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
-  ::selection{background:var(--lime);color:#0a0e12}
+  ::selection{background:var(--sel);color:var(--sel-ink)}
   body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;
     background:
-      radial-gradient(900px 500px at 12% -5%, rgba(198,242,78,.07), transparent 60%),
-      radial-gradient(800px 600px at 100% 8%, rgba(52,211,196,.06), transparent 55%),
-      radial-gradient(700px 700px at 50% 120%, rgba(155,140,240,.05), transparent 60%);}
-  body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.025;
+      radial-gradient(900px 500px at 12% -5%, var(--glow1), transparent 60%),
+      radial-gradient(800px 600px at 100% 8%, var(--glow2), transparent 55%),
+      radial-gradient(700px 700px at 50% 120%, var(--glow3), transparent 60%);}
+  body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:var(--grain);
     background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
   .wrap{position:relative;z-index:1;max-width:var(--maxw);margin:0 auto;padding:0 28px}
 
   /* nav */
-  .topbar{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);background:rgba(10,14,18,.72);border-bottom:1px solid var(--line-soft)}
+  .topbar{position:sticky;top:0;z-index:50;backdrop-filter:blur(12px);background:var(--topbar-bg);border-bottom:1px solid var(--line-soft)}
+  .topbar .right{display:flex;align-items:center;gap:22px}
+  .themebtn{display:inline-flex;align-items:center;justify-content:center;gap:7px;width:34px;height:34px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink-2);cursor:pointer;transition:color .2s,border-color .2s,background .2s}
+  .themebtn:hover{color:var(--ink);border-color:var(--ink-3)}
+  .themebtn svg{width:17px;height:17px}
+  .themebtn .moon{display:none} :root[data-theme="dark"] .themebtn .sun{display:none} :root[data-theme="dark"] .themebtn .moon{display:block}
   .topbar .row{display:flex;align-items:center;justify-content:space-between;height:62px}
   .brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.04em;font-size:15px}
   .brand .dot{width:11px;height:11px;border-radius:50%;background:var(--lime);box-shadow:0 0 14px var(--lime)}
@@ -172,18 +207,32 @@
   .reveal.in{opacity:1;transform:none}
 
   /* shared SVG diagram type */
-  .d-lane{fill:#18232d;stroke:#243440;stroke-width:1.2}
-  .d-lanetxt{fill:#e8eef2;font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;text-anchor:middle}
-  .d-lanesub{fill:#6a7d8a;font-family:'JetBrains Mono',monospace;font-size:9.5px;text-anchor:middle;letter-spacing:.04em}
-  .d-ll{stroke:#243440;stroke-width:1.4;stroke-dasharray:2 6}
-  .d-lbl{fill:#9fb1bd;font-family:'JetBrains Mono',monospace;font-size:11px;text-anchor:middle}
-  .d-note{fill:#6a7d8a;font-family:'JetBrains Mono',monospace;font-size:10px;font-style:italic}
-  .d-frame{fill:rgba(155,140,240,.035);stroke:#33304a;stroke-width:1.2;stroke-dasharray:4 4}
-  .d-frametab{fill:#1a1730;stroke:#33304a;stroke-width:1}
-  .d-frametxt{fill:#9b8cf0;font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em}
-  .d-div{stroke:#33304a;stroke-width:1;stroke-dasharray:3 4}
+  .d-lane{fill:var(--panel-2);stroke:var(--line);stroke-width:1.2}
+  .d-lanetxt{fill:var(--ink);font-family:'Archivo',sans-serif;font-weight:700;font-size:13px;text-anchor:middle}
+  .d-lanesub{fill:var(--ink-3);font-family:'JetBrains Mono',monospace;font-size:9.5px;text-anchor:middle;letter-spacing:.04em}
+  .d-ll{stroke:var(--line);stroke-width:1.4;stroke-dasharray:2 6}
+  .d-lbl{fill:var(--ink-2);font-family:'JetBrains Mono',monospace;font-size:11px;text-anchor:middle}
+  .d-note{fill:var(--ink-3);font-family:'JetBrains Mono',monospace;font-size:10px;font-style:italic}
+  .d-frame{fill:var(--frame-fill);stroke:var(--frame-line);stroke-width:1.2;stroke-dasharray:4 4}
+  .d-frametab{fill:var(--panel-2);stroke:var(--frame-line);stroke-width:1}
+  .d-frametxt{fill:var(--violet);font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;letter-spacing:.06em}
+  .d-div{stroke:var(--frame-line);stroke-width:1;stroke-dasharray:3 4}
   .m{stroke-width:1.6;fill:none}
-  .m-ink{stroke:#9fb1bd} .m-lime{stroke:#c6f24e} .m-cyan{stroke:#34d3c4} .m-amber{stroke:#f2a93b} .m-violet{stroke:#9b8cf0}
+  .m-ink{stroke:var(--ink-2)} .m-lime{stroke:var(--lime)} .m-cyan{stroke:var(--cyan)} .m-amber{stroke:var(--amber)} .m-violet{stroke:var(--violet)}
+
+  /* academic structure — abstract + figure captions */
+  .abstract{border:1px solid var(--line);border-left:3px solid var(--lime);background:var(--panel);border-radius:var(--radius);padding:26px 30px;margin-top:46px}
+  .abstract .albl{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--lime);font-weight:700;margin-bottom:12px}
+  .abstract p{color:var(--ink-2);font-size:15.5px;line-height:1.7}
+  .abstract p b{color:var(--ink)}
+  .abstract p + p{margin-top:12px}
+  figure{margin:0}
+  figcaption{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-3);margin-top:14px;line-height:1.55;letter-spacing:.01em}
+  figcaption b{color:var(--ink-2);font-weight:600}
+  @media print{
+    .topbar{display:none} body::before,body::after{display:none}
+    section{break-inside:avoid} .diagram{break-inside:avoid}
+  }
 </style>
 </head>
 <body>
@@ -192,14 +241,20 @@
 <div class="topbar">
   <div class="wrap row">
     <div class="brand"><span class="dot"></span>VELO&nbsp;<span>/ system architecture</span></div>
-    <nav class="navlinks">
-      <a href="#flow">Lifecycle</a>
-      <a href="#arch">Architecture</a>
-      <a href="#agents">Agents</a>
-      <a href="#trust">Trust</a>
-      <a href="#chain">Contracts</a>
-      <a href="#deploy">Footprint</a>
-    </nav>
+    <div class="right">
+      <nav class="navlinks">
+        <a href="#flow">Lifecycle</a>
+        <a href="#arch">Architecture</a>
+        <a href="#agents">Agents</a>
+        <a href="#trust">Trust</a>
+        <a href="#chain">Contracts</a>
+        <a href="#deploy">Footprint</a>
+      </nav>
+      <button class="themebtn" id="themeToggle" type="button" aria-label="Toggle light / dark theme" title="Toggle theme">
+        <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="4.2"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8L6 18M18 6l1.8-1.8"/></svg>
+        <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12.8A8.5 8.5 0 1 1 11.2 3a6.6 6.6 0 0 0 9.8 9.8z"/></svg>
+      </button>
+    </div>
   </div>
 </div>
 
@@ -215,6 +270,12 @@
     <div><div class="l">Proof model</div><div class="v">Signed receipts<small>EIP-712 · on-chain verify</small></div></div>
     <div><div class="l">Athlete record</div><div class="v">Soulbound<small>non-transferable history</small></div></div>
   </div>
+
+  <div class="abstract reveal">
+    <div class="albl">Abstract</div>
+    <p>Velo is an agent-driven application that turns subjective sports coaching into a <b>verifiable, on-chain record</b>. A coach submits match video and funds an analysis job; from that point the workflow runs autonomously. An always-on runner watches the <b>Somnia L1</b> chain for events and advances each job through two specialised agents — a <b>Form Analyst</b> that extracts biomechanical telemetry from the video, and a <b>Prescriber</b> that composes a training plan from the verified form analysis.</p>
+    <p>Each agent commits its result as an <b>EIP-712 signed receipt</b> whose authenticity is checked on-chain against an agent registry before payment escrow releases. Full reports live on IPFS; only their content hashes are anchored on-chain, keeping analysis cheap while the proof stays strong. This document describes the system at the level of <b>architecture and data flow</b> — the components, how a job moves through them, and why the output is trustworthy — rather than implementation detail.</p>
+  </div>
 </header>
 
 <!-- 1 · LIFECYCLE SEQUENCE -->
@@ -222,14 +283,15 @@
   <div class="sec-head reveal"><div class="sec-num">01</div><h2>The lifecycle of one job</h2></div>
   <p class="sec-sub reveal">From a coach pressing <b>pay</b> to escrow releasing, work advances on its own — driven by <b>chain events</b>, not by clicks. The analysis itself can run two ways: a <b>Somnia-native</b> inference path with an on-chain receipt, or an <b>off-chain</b> compute path. Either way the result lands as a signed receipt the contract verifies.</p>
 
-  <div class="diagram reveal">
+  <figure class="reveal">
+  <div class="diagram">
     <svg viewBox="0 0 1080 742" role="img" aria-label="Job lifecycle sequence diagram">
       <defs>
-        <marker id="ah-ink" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#9fb1bd"/></marker>
-        <marker id="ah-lime" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#c6f24e"/></marker>
-        <marker id="ah-cyan" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#34d3c4"/></marker>
-        <marker id="ah-amber" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#f2a93b"/></marker>
-        <marker id="ah-violet" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#9b8cf0"/></marker>
+        <marker id="ah-ink" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" style="fill:var(--ink-2)"/></marker>
+        <marker id="ah-lime" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" style="fill:var(--lime)"/></marker>
+        <marker id="ah-cyan" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" style="fill:var(--cyan)"/></marker>
+        <marker id="ah-amber" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" style="fill:var(--amber)"/></marker>
+        <marker id="ah-violet" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" style="fill:var(--violet)"/></marker>
       </defs>
 
       <!-- lifelines -->
@@ -246,11 +308,11 @@
         <rect class="d-lane" x="245" y="24" width="120" height="42" rx="9"/>
         <text class="d-lanetxt" x="305" y="44">Web App</text><text class="d-lanesub" x="305" y="57">Vercel · React</text>
         <rect class="d-lane" x="485" y="24" width="120" height="42" rx="9"/>
-        <text class="d-lanetxt" x="545" y="44" fill="#c6f24e">Somnia L1</text><text class="d-lanesub" x="545" y="57">contracts · escrow</text>
+        <text class="d-lanetxt" x="545" y="44" style="fill:var(--lime)">Somnia L1</text><text class="d-lanesub" x="545" y="57">contracts · escrow</text>
         <rect class="d-lane" x="730" y="24" width="120" height="42" rx="9"/>
-        <text class="d-lanetxt" x="790" y="44" fill="#9b8cf0">Agent Runner</text><text class="d-lanesub" x="790" y="57">Koyeb · watcher</text>
+        <text class="d-lanetxt" x="790" y="44" style="fill:var(--violet)">Agent Runner</text><text class="d-lanesub" x="790" y="57">Koyeb · watcher</text>
         <rect class="d-lane" x="940" y="24" width="120" height="42" rx="9"/>
-        <text class="d-lanetxt" x="1000" y="44" fill="#f2a93b">IPFS</text><text class="d-lanesub" x="1000" y="57">Pinata · pinning</text>
+        <text class="d-lanetxt" x="1000" y="44" style="fill:var(--amber)">IPFS</text><text class="d-lanesub" x="1000" y="57">Pinata · pinning</text>
       </g>
 
       <!-- 1 coach -> web -->
@@ -275,7 +337,7 @@
       <path class="d-frametab" d="M458,262 h82 v18 l-10,8 h-72 z"/>
       <text class="d-frametxt" x="468" y="278">alt · analysis</text>
 
-      <text class="d-lanesub" x="470" y="300" text-anchor="start" fill="#9b8cf0">Somnia-native path</text>
+      <text class="d-lanesub" x="470" y="300" text-anchor="start" style="fill:var(--violet)">Somnia-native path</text>
       <!-- agent -> somnia query -->
       <line class="m m-violet" x1="788" y1="320" x2="547" y2="320" marker-end="url(#ah-violet)"/>
       <text class="d-lbl" x="667" y="314">query on-chain LLM agent</text>
@@ -284,14 +346,14 @@
       <text class="d-lbl" x="667" y="340">consensus inference + receipt</text>
 
       <line class="d-div" x1="458" y1="366" x2="896" y2="366"/>
-      <text class="d-lanesub" x="470" y="382" text-anchor="start" fill="#34d3c4">else · off-chain compute path</text>
+      <text class="d-lanesub" x="470" y="382" text-anchor="start" style="fill:var(--cyan)">else · off-chain compute path</text>
 
       <!-- agent -> ipfs fetch video (crosses frame edge) -->
       <line class="m m-amber" x1="790" y1="404" x2="998" y2="404" marker-end="url(#ah-amber)"/>
       <text class="d-lbl" x="895" y="398">fetch video</text>
       <!-- agent self loop: pose + telemetry -->
       <path class="m m-violet" d="M790,420 h34 q9,0 9,9 v3 q0,9 -9,9 h-34" marker-end="url(#ah-violet)"/>
-      <text class="d-note" x="840" y="438" fill="#9b8cf0">pose → telemetry + telemetryHash</text>
+      <text class="d-note" x="840" y="438" style="fill:var(--violet)">pose → telemetry + telemetryHash</text>
 
       <!-- 5 agent -> ipfs pin report -->
       <line class="m m-amber" x1="790" y1="486" x2="998" y2="486" marker-end="url(#ah-amber)"/>
@@ -303,14 +365,14 @@
 
       <!-- somnia self loop verify -->
       <path class="m m-lime" d="M545,544 h34 q9,0 9,9 v3 q0,9 -9,9 h-34" marker-end="url(#ah-lime)"/>
-      <text class="d-note" x="595" y="562" fill="#c6f24e">verify EIP-712 vs AgentRegistry</text>
+      <text class="d-note" x="595" y="562" style="fill:var(--lime)">verify EIP-712 vs AgentRegistry</text>
 
       <!-- prescriber note -->
-      <text class="d-note" x="545" y="598" text-anchor="middle" fill="#6a7d8a">↻ Prescriber agent repeats ⑤–⑥, chaining a 2nd signed receipt to the first</text>
+      <text class="d-note" x="545" y="598" text-anchor="middle" style="fill:var(--ink-3)">↻ Prescriber agent repeats ⑤–⑥, chaining a 2nd signed receipt to the first</text>
 
       <!-- somnia self loop settle -->
       <path class="m m-lime" d="M545,616 h34 q9,0 9,9 v3 q0,9 -9,9 h-34" marker-end="url(#ah-lime)"/>
-      <text class="d-note" x="595" y="634" fill="#c6f24e">settle escrow · append AthleteSBT</text>
+      <text class="d-note" x="595" y="634" style="fill:var(--lime)">settle escrow · append AthleteSBT</text>
 
       <!-- 7 somnia -> web -->
       <line class="m m-cyan" x1="545" y1="672" x2="307" y2="672" marker-end="url(#ah-cyan)"/>
@@ -322,13 +384,15 @@
     </svg>
 
     <div class="legend">
-      <span style="color:#c6f24e"><i></i> on-chain write</span>
-      <span style="color:#34d3c4"><i></i> read / index</span>
-      <span style="color:#f2a93b"><i></i> IPFS storage</span>
-      <span style="color:#9b8cf0"><i></i> Somnia-native inference</span>
-      <span style="color:#9fb1bd"><i></i> user action</span>
+      <span style="color:var(--lime)"><i></i> on-chain write</span>
+      <span style="color:var(--cyan)"><i></i> read / index</span>
+      <span style="color:var(--amber)"><i></i> IPFS storage</span>
+      <span style="color:var(--violet)"><i></i> Somnia-native inference</span>
+      <span style="color:var(--ink-2)"><i></i> user action</span>
     </div>
   </div>
+  <figcaption><b>Figure 1 — Lifecycle of a single analysis job.</b> Vertical lanes are system actors; arrows are messages ordered top-to-bottom in time. The dashed frame marks the two interchangeable analysis paths — Somnia-native inference versus off-chain compute. Self-loops denote internal work; ⑤–⑥ then repeat for the Prescriber's chained receipt.</figcaption>
+  </figure>
 </section>
 
 <!-- 2 · ARCHITECTURE PLANES -->
@@ -336,14 +400,15 @@
   <div class="sec-head reveal"><div class="sec-num">02</div><h2>Four planes, one promise</h2></div>
   <p class="sec-sub reveal">The system separates cleanly into the people who use it, the app they touch, the <b>chain that is the source of truth</b>, and the autonomous compute that does the work. The web app never runs analysis; the contracts never trust the app. Everything meaningful is anchored on-chain.</p>
 
-  <div class="planes reveal">
+  <figure class="reveal">
+  <div class="planes">
     <!-- people -->
     <div class="plane t-people">
       <div class="phead"><span class="ptag">People</span><span class="pname">human actors</span></div>
       <div class="chips">
-        <div class="chip"><div class="cn"><span class="d" style="background:#9fb1bd"></span>Coach</div><small>Uploads tape, funds analysis jobs, manages a roster of athletes.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#9fb1bd"></span>Athlete</div><small>Owns their tape library and a permanent on-chain session history.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#9fb1bd"></span>Public</div><small>Browses the agent directory, bounty marketplace, and shareable profiles.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--ink-2)"></span>Coach</div><small>Uploads tape, funds analysis jobs, manages a roster of athletes.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--ink-2)"></span>Athlete</div><small>Owns their tape library and a permanent on-chain session history.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--ink-2)"></span>Public</div><small>Browses the agent directory, bounty marketplace, and shareable profiles.</small></div>
       </div>
     </div>
 
@@ -353,9 +418,9 @@
     <div class="plane t-app">
       <div class="phead"><span class="ptag">Application</span><span class="pname"><b>Vercel</b> · React + wagmi / Reown wallet</span></div>
       <div class="chips">
-        <div class="chip"><div class="cn"><span class="d" style="background:#34d3c4"></span>Velo Web App</div><small>Coach &amp; athlete flows, role-gated by on-chain identity. Reads chain state directly; signs wallet transactions.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#34d3c4"></span>Receipt views</div><small>Composition tree that visualises how form + prescription receipts chain together.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#34d3c4"></span>Marketplace</div><small>Agent directory, open bounties, public athlete pages — all read from chain.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--cyan)"></span>Velo Web App</div><small>Coach &amp; athlete flows, role-gated by on-chain identity. Reads chain state directly; signs wallet transactions.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--cyan)"></span>Receipt views</div><small>Composition tree that visualises how form + prescription receipts chain together.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--cyan)"></span>Marketplace</div><small>Agent directory, open bounties, public athlete pages — all read from chain.</small></div>
       </div>
     </div>
 
@@ -365,10 +430,10 @@
     <div class="plane t-chain">
       <div class="phead"><span class="ptag">Trust layer</span><span class="pname"><b>Somnia L1</b> · chainId 50312 · source of truth</span></div>
       <div class="chips">
-        <div class="chip"><div class="cn"><span class="d" style="background:#c6f24e"></span>Orchestrator + Escrow</div><small>Coaches pay jobs; escrow holds the fee until signed receipts verify.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#c6f24e"></span>AgentRegistry</div><small>On-chain directory of agent wallets, skills, and fees — the verifier of every receipt.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#c6f24e"></span>AthleteSBT</div><small>Soulbound token; each session appends to a record the coach can't alter.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#c6f24e"></span>Bounty + Relay</div><small>Open task marketplace, plus a relay that captures Somnia-native inference callbacks.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--lime)"></span>Orchestrator + Escrow</div><small>Coaches pay jobs; escrow holds the fee until signed receipts verify.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--lime)"></span>AgentRegistry</div><small>On-chain directory of agent wallets, skills, and fees — the verifier of every receipt.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--lime)"></span>AthleteSBT</div><small>Soulbound token; each session appends to a record the coach can't alter.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--lime)"></span>Bounty + Relay</div><small>Open task marketplace, plus a relay that captures Somnia-native inference callbacks.</small></div>
       </div>
     </div>
 
@@ -378,13 +443,15 @@
     <div class="plane t-compute">
       <div class="phead"><span class="ptag">Autonomous compute</span><span class="pname"><b>Koyeb</b> + off-chain services</span></div>
       <div class="chips">
-        <div class="chip"><div class="cn"><span class="d" style="background:#9b8cf0"></span>Agent Runner</div><small>Always-on Node service: chain watcher → agent pipeline → REST API for the web app.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#9b8cf0"></span>Vision Engine</div><small>FastAPI sidecar. Pose estimation → deterministic biomechanical telemetry + a reproducible hash.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#9b8cf0"></span>LLM reasoning</div><small>Somnia-native consensus inference, with an off-chain LLM as automatic fallback.</small></div>
-        <div class="chip"><div class="cn"><span class="d" style="background:#9b8cf0"></span>IPFS storage</div><small>Video and full reports pinned; only their content hashes are anchored on-chain.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--violet)"></span>Agent Runner</div><small>Always-on Node service: chain watcher → agent pipeline → REST API for the web app.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--violet)"></span>Vision Engine</div><small>FastAPI sidecar. Pose estimation → deterministic biomechanical telemetry + a reproducible hash.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--violet)"></span>LLM reasoning</div><small>Somnia-native consensus inference, with an off-chain LLM as automatic fallback.</small></div>
+        <div class="chip"><div class="cn"><span class="d" style="background:var(--violet)"></span>IPFS storage</div><small>Video and full reports pinned; only their content hashes are anchored on-chain.</small></div>
       </div>
     </div>
   </div>
+  <figcaption><b>Figure 2 — The four planes of the system.</b> People act through the web app; the app reads and writes the chain; the chain is the single source of truth; autonomous compute does the analysis off-chain. Labels between planes name the direction of data flow. The application never runs analysis, and the contracts never trust the application.</figcaption>
+  </figure>
 </section>
 
 <!-- 3 · AGENT PIPELINE -->
@@ -392,7 +459,8 @@
   <div class="sec-head reveal"><div class="sec-num">03</div><h2>The agent pipeline</h2></div>
   <p class="sec-sub reveal">Two agents run in sequence, each triggered by a chain event and each emitting its own signed receipt. The Prescriber always reads the form receipt <b>from chain</b> — never from in-memory state — so the second analysis is provably built on the first.</p>
 
-  <div class="pipe reveal">
+  <figure class="reveal">
+  <div class="pipe">
     <div class="pevent"><span class="ln"></span><span class="ev">event · JobRequested</span><span class="ln"></span></div>
 
     <div class="pstage s1">
@@ -426,7 +494,7 @@
         <span class="f">sign Rx receipt</span><span class="ar">→</span>
         <span class="f">priorReceiptHash link</span>
       </div>
-      <p>Reads the verified form receipt from chain, generates a training prescription, and submits a second signed receipt explicitly chained to the first via <code style="font-family:'JetBrains Mono';font-size:12px;color:#34d3c4">priorReceiptHash</code>.</p>
+      <p>Reads the verified form receipt from chain, generates a training prescription, and submits a second signed receipt explicitly chained to the first via <code style="font-family:'JetBrains Mono';font-size:12px;color:var(--cyan)">priorReceiptHash</code>.</p>
     </div>
 
     <div class="pevent"><span class="ln"></span><span class="ev">settle · escrow released → SBT appended</span><span class="ln"></span></div>
@@ -440,11 +508,13 @@
       <p>The Orchestrator verifies both signatures against the AgentRegistry, releases escrow (agents withdraw via pull-payment), updates reputation, and appends the session to the athlete's soulbound history.</p>
     </div>
   </div>
+  <figcaption><b>Figure 3 — The two-agent pipeline.</b> Each chain event (green) triggers the next agent; each agent emits its own signed receipt. The Prescriber reads the form receipt from chain, so its output is provably built on a verified prior. Settlement is performed entirely by contracts, with no human in the loop.</figcaption>
+  </figure>
 
   <div class="pside reveal">
     <div class="sub a">
       <div class="nm">Bounty agent <span class="pill">marketplace</span></div>
-      <small>Open tasks posted on-chain route by <code style="font-family:'JetBrains Mono';font-size:11px;color:#34d3c4">requiredSkills</code>. The matching agent picks up the bounty, runs the same analysis, and settles on-chain — no coach hand-off required.</small>
+      <small>Open tasks posted on-chain route by <code style="font-family:'JetBrains Mono';font-size:11px;color:var(--cyan)">requiredSkills</code>. The matching agent picks up the bounty, runs the same analysis, and settles on-chain — no coach hand-off required.</small>
     </div>
     <div class="sub b">
       <div class="nm">Swappable model <span class="pill">coach's choice</span></div>
@@ -547,6 +617,7 @@
       <div class="cd">Captures Somnia-native LLM inference callbacks so the runner can read native results.</div>
     </div>
   </div>
+  <figcaption style="margin-top:12px"><b>Table 1 — Deployed contracts on Somnia testnet (chainId 50312).</b> Addresses are abbreviated; the orchestrator and registry together enforce that no off-chain actor can settle a job without a valid, registered signature.</figcaption>
 
   <div class="callout reveal">
     <h3>Two design choices that carry the trust model</h3>
@@ -579,10 +650,22 @@
 </footer>
 
 <script>
+  /* scroll reveal */
   const io = new IntersectionObserver((entries)=>{
     entries.forEach(e=>{ if(e.isIntersecting){ e.target.classList.add('in'); io.unobserve(e.target);} });
   },{threshold:.12});
   document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+
+  /* theme toggle (persists choice; the no-flash head script sets the initial value) */
+  const btn = document.getElementById('themeToggle');
+  if(btn){
+    btn.addEventListener('click', ()=>{
+      const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+      const next = cur === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try{ localStorage.setItem('velo-theme', next); }catch(e){}
+    });
+  }
 </script>
 </body>
 </html>
