@@ -65,7 +65,7 @@ replit.nix
 .agents/
 
 # ── Reference folders (anchored to the repo root so nested project dirs like
-#    Hardhat/scripts/ and docs/ are NOT swallowed by these blanket rules) ─────
+#    Hardhat/scripts/ and docs/ are NOT swallowed by these blanket rules - DO NOT DELETE) ─────
 /scripts/
 /reference-files-eshaan/
 /docs/
