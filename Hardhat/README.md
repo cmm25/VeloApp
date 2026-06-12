@@ -120,5 +120,84 @@ flowchart LR
   Web -->|"payJob, reads"| Hardhat
   Agents -->|"watch events, submit receipts"| Hardhat
 ```
+## Verifying a receipt on-chain
+
+Every completed session produces two on-chain receipts. Each receipt card in the
+app shows a **Submission tx**, **Submission block**, and **ipfsCid**. You can
+verify these independently using only `curl` — no wallet or tooling required.
+
+---
+
+### What to grab from your receipt card
+
+| Field | Where | Example |
+|-------|-------|---------|
+| **Submission tx** (form) | Form Receipt section | `0xf6c15f...d48d8` |
+| **Submission tx** (prescription) | Prescription Receipt section | `0x0a49b0...c4c` |
+| **ipfsCid** | Either receipt card | `bafkreib74...ksbi` |
+
+---
+
+### 1 — Confirm a transaction is on-chain
+
+Replace `YOUR_TX_HASH` with the **Submission tx** from the receipt card:
+
+```bash
+curl -X POST https://api.infra.testnet.somnia.network/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["YOUR_TX_HASH"],"id":1}'
+```
+
+A confirmed receipt returns two key fields:
+
+```json
+"status": "0x1",
+"to": "0x2a0b15157313e81035d1f58e54da2dacd6cfdf49"
+```
+
+`status: 0x1` = transaction succeeded. `to` is the VeloOrchestrator address —
+confirming the receipt was written to the correct contract on Somnia testnet
+(chain ID 50312).
+
+**Live examples from a completed session:**
+
+```bash
+# Form receipt
+curl -X POST https://api.infra.testnet.somnia.network/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["0xf6c15f386e1922b77927aa2addf9a92b938a25c02e01a1405bcf9690a7dd48d8"],"id":1}'
+
+# Prescription receipt (also mints/updates the athlete SBT)
+curl -X POST https://api.infra.testnet.somnia.network/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getTransactionReceipt","params":["0x0a49b0b6e6d594739da0223a1559ad2ba955e54988707e06de54705c6bd20c4c"],"id":1}'
+```
+
+---
+
+### 2 —  Confirm the contracts are deployed
+
+```bash
+# VeloOrchestrator
+curl -X POST https://api.infra.testnet.somnia.network/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x2A0B15157313E81035D1f58e54da2dacd6Cfdf49","latest"],"id":1}'
+
+# AthleteSBT
+curl -X POST https://api.infra.testnet.somnia.network/ \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"eth_getCode","params":["0x738550ebb0E9fE77E45a123617d165e4FE52C723","latest"],"id":1}'
+```
+
+Any response other than `"result":"0x"` confirms the contract is live.
+
+---
+
+### Note on the block explorer
+
+The Somnia testnet Blockscout explorer (`shannon-explorer.somnia.network`) is
+currently indexing historical blocks and may not yet show recent transactions.
+`eth_getTransactionReceipt` is the authoritative source — a `status: 0x1`
+response is final confirmation regardless of explorer visibility.
 
 Contracts are the source of truth for job state, payments, and receipt validity. The web app sends transactions and reads state; the agent runner reacts to events and submits signed results. Neither layer can bypass on-chain verification.
